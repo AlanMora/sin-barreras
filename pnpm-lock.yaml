@@ -21,8 +21,8 @@ importers:
         specifier: 2.11.3
         version: 2.11.3(preact@11.0.1)
       lucide-preact:
-        specifier: 1.54.0
-        version: 1.54.0(preact@11.0.1)
+        specifier: 1.52.0
+        version: 1.52.0(preact@11.0.1)
       preact:
         specifier: 11.0.1
         version: 11.0.1(preact-render-to-string@6.8.0)
@@ -1339,8 +1339,8 @@ packages:
     resolution: {integrity: sha512-BLrgEcRTwX2o6gGxGOCNyMvGSp35YofuYzw9h1IMTRmKqttAZZVU67bdb9Pr2vUHA8+j3i2tJfjO6C6+4myGTA==}
     engines: {node: 18 || 20 || >=22}
 
-  baseline-browser-mapping@2.11.27:
-    resolution: {integrity: sha512-ElY12DaROGuan+lMmZ8Cvo/ZUbXPe7Enc/9VU/b1T3Kp4dwytRcNdR8DoSJN5SNJT/CuvcCA0DHDVmMOCePdRQ==}
+  baseline-browser-mapping@2.11.28:
+    resolution: {integrity: sha512-br0LOmjJqr6Rt4AEkadbcNf67Zpo7EPwKsWbjnRrJIa1QYFHQBqM4C7F2WTbV8ahTEcg1Eo+Y0aWjjORInYFyA==}
     engines: {node: '>=6.0.0'}
     hasBin: true
 
@@ -1973,8 +1973,8 @@ packages:
   lru-cache@5.1.1:
     resolution: {integrity: sha512-KpNARQA3Iwv+jTA0utUVVbrh+Jlrr1Fv0e56GGzAFOXN7dk/FviaDW8LHmK52DlcH4WP2n6gI8vN1aesBFgo9w==}
 
-  lucide-preact@1.54.0:
-    resolution: {integrity: sha512-xUu2KszP5wR0YBCgsz2V6LEjk29sx9FKzDH+mYn/KMz+/yfxhd7kao8rAVR+iWc0OWphW9Cv8EBmLyYd6gurfA==}
+  lucide-preact@1.52.0:
+    resolution: {integrity: sha512-bTWQJ4tzCWZ3UipPGRwj/m4bnojnObP2lD2NvznFNlTbzX6Q8b+F43d2cpegkS88B1zF6ioB7QqAPFgRJnd87A==}
     peerDependencies:
       preact: ^10.27.2 || ^11.0.0-0
 
@@ -3780,7 +3780,7 @@ snapshots:
 
   balanced-match@4.0.4: {}
 
-  baseline-browser-mapping@2.11.27: {}
+  baseline-browser-mapping@2.11.28: {}
 
   boolbase@1.0.0: {}
 
@@ -3794,7 +3794,7 @@ snapshots:
 
   browserslist@4.29.3:
     dependencies:
-      baseline-browser-mapping: 2.11.27
+      baseline-browser-mapping: 2.11.28
       caniuse-lite: 1.0.30001815
       electron-to-chromium: 1.5.451
       node-releases: 2.0.58
@@ -4413,7 +4413,7 @@ snapshots:
     dependencies:
       yallist: 3.1.1
 
-  lucide-preact@1.54.0(preact@11.0.1):
+  lucide-preact@1.52.0(preact@11.0.1):
     dependencies:
       preact: 11.0.1(preact-render-to-string@6.8.0)
 
