@@ -1,0 +1,5 @@
+packages:
+  - apps/pwa
+
+# Versiones exactas: un build de emergencia debe ser reproducible.
+saveExact: true

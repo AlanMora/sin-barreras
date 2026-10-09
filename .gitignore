@@ -1,0 +1,24 @@
+# Rust
+/target/
+
+# Node / PWA
+node_modules/
+dist/
+dev-dist/
+coverage/
+playwright-report/
+test-results/
+*.tsbuildinfo
+
+# Certificados y secretos de desarrollo (nunca se versionan)
+/infra/dev/certs/
+/infra/dev/secrets/
+.env
+.env.*
+!.env.example
+
+# Editores / SO
+.idea/
+.vscode/*
+!.vscode/extensions.json
+.DS_Store
