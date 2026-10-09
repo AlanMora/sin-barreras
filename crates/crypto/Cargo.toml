@@ -1,0 +1,19 @@
+[package]
+name = "crypto"
+version = "0.1.0"
+description = "Cifrado del registro: AES-256-GCM por sesión y envoltura de llaves con HPKE (RFC 9180)."
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+aes-gcm.workspace = true
+base64.workspace = true
+getrandom.workspace = true
+hpke.workspace = true
+thiserror.workspace = true
+zeroize.workspace = true
+
+[lints]
+workspace = true
