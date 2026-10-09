@@ -9,6 +9,9 @@
 //! ubicación exacta y los datos de red (IP, user agent). `sensitive` se cifra
 //! con AES-256-GCM dentro del BFF antes de salir del proceso (Fase 2): ni
 //! Valkey ni Postgres lo ven en claro.
+//!
+//! En el stream `sb:rec:events` cada entrada lleva un [`StreamRecord`]: el
+//! evento sin `sensitive` y, aparte, el contenido sellado ([`SealedPayload`]).
 
 use protocol::Timestamp;
 use serde::{Deserialize, Serialize};
@@ -16,6 +19,13 @@ use uuid::Uuid;
 
 /// Versión del esquema del sobre. Se incrementa ante cambios incompatibles.
 pub const SCHEMA_VERSION: u16 = 1;
+
+/// Stream de Valkey con los eventos pendientes de guardar.
+pub const RECORD_STREAM: &str = "sb:rec:events";
+/// Cola de errores: eventos que fallaron repetidamente.
+pub const DEAD_LETTER_STREAM: &str = "sb:rec:dlq";
+/// Consumer group de record-writer.
+pub const RECORD_GROUP: &str = "record-writers";
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RecordEvent {
@@ -105,6 +115,8 @@ impl RecordEvent {
 #[serde(rename_all = "snake_case")]
 pub enum EventKind {
     // Conexión y sesión
+    /// DEK de la sesión envuelta para la llave de investigación (no sensible).
+    SessionKeyCreated,
     ConnectionOpened,
     ConnectionClosed,
     SessionStarted,
@@ -147,6 +159,7 @@ impl EventKind {
     /// Nombre estable (igual al de serde) para métricas, logs y SQL.
     pub fn as_str(&self) -> &'static str {
         match self {
+            Self::SessionKeyCreated => "session_key_created",
             Self::ConnectionOpened => "connection_opened",
             Self::ConnectionClosed => "connection_closed",
             Self::SessionStarted => "session_started",
@@ -203,6 +216,162 @@ pub enum SensitivePayload {
     VideoCall {
         data: serde_json::Value,
     },
+}
+
+/// Entrada del stream del registro: el evento (sin contenido sensible) y el
+/// contenido sensible ya cifrado.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct StreamRecord {
+    pub event: RecordEvent,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sealed: Option<SealedPayload>,
+}
+
+/// Contenido sensible cifrado con AES-256-GCM.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SealedPayload {
+    pub alg: String,
+    pub key_ref: KeyRef,
+    /// base64
+    pub nonce: String,
+    /// base64 (incluye la etiqueta GCM)
+    pub ciphertext: String,
+}
+
+/// Dónde está la llave con que se cifró.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum KeyRef {
+    /// La DEK de la sesión (registrada con `session_key_created`).
+    Session { session_id: Uuid },
+    /// Llave propia del evento, envuelta aquí mismo para la llave de
+    /// investigación (eventos sin sesión o sin DEK disponible).
+    Inline { wrapped: WrappedKeyData },
+}
+
+/// DEK envuelta con HPKE para la llave pública de investigación.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WrappedKeyData {
+    pub alg: String,
+    pub recipient_key_id: String,
+    /// base64
+    pub encapped: String,
+    /// base64
+    pub ciphertext: String,
+}
+
+/// Datos asociados (AAD) del cifrado del contenido: ligan el texto cifrado a
+/// su evento. Moverlo a otro registro hace fallar el descifrado.
+pub fn sensitive_aad(event: &RecordEvent) -> Vec<u8> {
+    let session = event
+        .session_id
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| "-".into());
+    format!(
+        "sb-rec-v1|{}|{}|{}",
+        event.event_id,
+        session,
+        event.kind.as_str()
+    )
+    .into_bytes()
+}
+
+/// Contexto (AAD) de la envoltura de una DEK de sesión.
+pub fn session_key_context(session_id: Uuid) -> Vec<u8> {
+    format!("sb-dek-v1|session|{session_id}").into_bytes()
+}
+
+/// Contexto (AAD) de la envoltura de una DEK propia de un evento.
+pub fn inline_key_context(event_id: Uuid) -> Vec<u8> {
+    format!("sb-dek-v1|event|{event_id}").into_bytes()
+}
+
+/// Descifrado del contenido sensible (solo para la herramienta de
+/// investigación, que tiene la llave privada).
+pub mod open {
+    use base64::{Engine, engine::general_purpose::STANDARD as B64};
+    use crypto::{RecipientPrivateKey, Sealed, WrappedKey, unwrap_with_recipient};
+
+    use super::{
+        EventKind, KeyRef, RecordEvent, SealedPayload, SensitivePayload, WrappedKeyData,
+        inline_key_context, sensitive_aad, session_key_context,
+    };
+
+    #[derive(Debug, thiserror::Error)]
+    pub enum OpenError {
+        #[error("falta la llave de la sesión")]
+        MissingSessionKey,
+        #[error("dato mal codificado: {0}")]
+        Encoding(&'static str),
+        #[error(transparent)]
+        Crypto(#[from] crypto::CryptoError),
+        #[error("contenido descifrado ilegible: {0}")]
+        Json(#[from] serde_json::Error),
+    }
+
+    impl WrappedKeyData {
+        /// Lee la DEK envuelta de un evento `session_key_created`.
+        pub fn from_session_key_event(event: &RecordEvent) -> Option<Self> {
+            if event.kind != EventKind::SessionKeyCreated {
+                return None;
+            }
+            let attr = |k: &str| event.attributes.get(k)?.as_str().map(str::to_owned);
+            Some(Self {
+                alg: attr("alg")?,
+                recipient_key_id: attr("recipient_key_id")?,
+                encapped: attr("encapped")?,
+                ciphertext: attr("wrapped_key")?,
+            })
+        }
+
+        fn to_wrapped_key(&self) -> Result<WrappedKey, OpenError> {
+            Ok(WrappedKey {
+                alg: self.alg.clone(),
+                recipient_key_id: self.recipient_key_id.clone(),
+                encapped: B64
+                    .decode(&self.encapped)
+                    .map_err(|_| OpenError::Encoding("encapped"))?,
+                ciphertext: B64
+                    .decode(&self.ciphertext)
+                    .map_err(|_| OpenError::Encoding("wrapped_key"))?,
+            })
+        }
+    }
+
+    /// Descifra el contenido de `event`. `session_key` es la DEK envuelta de
+    /// su sesión (necesaria si `key_ref` es `session`).
+    pub fn open_sealed(
+        event: &RecordEvent,
+        sealed: &SealedPayload,
+        session_key: Option<&WrappedKeyData>,
+        private: &RecipientPrivateKey,
+    ) -> Result<SensitivePayload, OpenError> {
+        let dek = match &sealed.key_ref {
+            KeyRef::Session { session_id } => {
+                let wrapped = session_key.ok_or(OpenError::MissingSessionKey)?;
+                unwrap_with_recipient(
+                    private,
+                    &wrapped.to_wrapped_key()?,
+                    &session_key_context(*session_id),
+                )?
+            }
+            KeyRef::Inline { wrapped } => unwrap_with_recipient(
+                private,
+                &wrapped.to_wrapped_key()?,
+                &inline_key_context(event.event_id),
+            )?,
+        };
+        let nonce: [u8; 12] = B64
+            .decode(&sealed.nonce)
+            .ok()
+            .and_then(|n| n.try_into().ok())
+            .ok_or(OpenError::Encoding("nonce"))?;
+        let ciphertext = B64
+            .decode(&sealed.ciphertext)
+            .map_err(|_| OpenError::Encoding("ciphertext"))?;
+        let plain = crypto::open(&dek, &sensitive_aad(event), &Sealed { nonce, ciphertext })?;
+        Ok(serde_json::from_slice(&plain)?)
+    }
 }
 
 #[cfg(test)]
