@@ -10,6 +10,7 @@ use futures::{FutureExt, SinkExt, StreamExt, future::BoxFuture, stream::BoxStrea
 use protocol::{ChatKind, DeliveryStatus, IncidentState, QuickReply, Timestamp, VideoCallState};
 use reqwest::StatusCode;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
+use service_kit::backoff::Backoff;
 use tokio::sync::mpsc;
 use tokio_tungstenite::tungstenite::{Message, client::IntoClientRequest, http::HeaderValue};
 use uuid::Uuid;
@@ -18,7 +19,7 @@ use super::{
     C5Error, C5Gateway, C5InboundEvent, C5InboundKind, LocationReport, NewIncident,
     OutboundMessage, VideoCallRequest,
 };
-use crate::{backoff::Backoff, config::C5Config};
+use crate::config::C5Config;
 
 const API_KEY_HEADER: &str = "x-api-key";
 

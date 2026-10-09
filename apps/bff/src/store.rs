@@ -10,9 +10,16 @@ use fred::{
 use protocol::ServerEvent;
 use uuid::Uuid;
 
+use events::RECORD_STREAM;
+
 use crate::valkey::{
     NO_DEDUPE, SWEEP_KEY, SessionKeys, Valkey, ValkeyError, c5_incident_key, value_to_string,
 };
+
+/// Une los registros codificados para pasarlos al script (uno por línea).
+fn blob(records: &[String]) -> Value {
+    s(records.join("\n"))
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ResumeOutcome {
@@ -47,6 +54,20 @@ pub struct PendingCommand {
     pub received_at_ms: i64,
 }
 
+/// Un comando del ciudadano listo para aceptarse.
+pub struct AcceptCommand<'a> {
+    pub client_msg_id: Uuid,
+    /// JSON del mensaje ya validado (lo que se reenviará al C5).
+    pub message_json: &'a str,
+    pub now_ms: i64,
+    /// Si va al stream de reenvío al C5 (los `client_event` no).
+    pub forward: bool,
+    /// Eco secuenciado para el historial (chats).
+    pub echo: Option<&'a ServerEvent>,
+    /// Registros codificados que se escriben en la misma operación.
+    pub records: &'a [String],
+}
+
 #[derive(Clone)]
 pub struct Store {
     valkey: Valkey,
@@ -72,16 +93,25 @@ impl Store {
         now_ms: i64,
         ttl: Duration,
         fields: &[(&str, String)],
+        records: &[String],
     ) -> Result<bool, ValkeyError> {
         let keys = SessionKeys::new(session_id);
-        let mut args = vec![s(session_id), s(token_hash), s(now_ms), s(ttl.as_millis())];
+        let mut all = keys.data();
+        all.push(RECORD_STREAM.to_owned());
+        let mut args = vec![
+            s(session_id),
+            s(token_hash),
+            s(now_ms),
+            s(ttl.as_millis()),
+            blob(records),
+        ];
         for (field, value) in fields {
             args.push(s(field));
             args.push(s(value));
         }
         let created: i64 = self
             .valkey
-            .run(&self.valkey.scripts.session_create, keys.data(), args)
+            .run(&self.valkey.scripts.session_create, all, args)
             .await?;
         Ok(created == 1)
     }
@@ -91,12 +121,15 @@ impl Store {
         session_id: Uuid,
         presented_hash: &str,
         new_hash: &str,
+        records: &[String],
     ) -> Result<ResumeOutcome, ValkeyError> {
         let keys = SessionKeys::new(session_id);
-        let args = vec![s(presented_hash), s(new_hash)];
+        let mut all = keys.data();
+        all.push(RECORD_STREAM.to_owned());
+        let args = vec![s(presented_hash), s(new_hash), blob(records)];
         let reply: Vec<Value> = self
             .valkey
-            .run(&self.valkey.scripts.session_resume, keys.data(), args)
+            .run(&self.valkey.scripts.session_resume, all, args)
             .await?;
         let status = reply.first().and_then(value_to_string).unwrap_or_default();
         let seq = reply
@@ -172,16 +205,21 @@ impl Store {
     pub async fn accept(
         &self,
         session_id: Uuid,
-        client_msg_id: Uuid,
-        message_json: &str,
-        now_ms: i64,
-        forward: bool,
-        echo: Option<&ServerEvent>,
+        command: AcceptCommand<'_>,
     ) -> Result<AcceptOutcome, ValkeyError> {
+        let AcceptCommand {
+            client_msg_id,
+            message_json,
+            now_ms,
+            forward,
+            echo,
+            records,
+        } = command;
         let keys = SessionKeys::new(session_id);
         let mut all = keys.data();
         all.push(keys.fwd.clone());
         all.push(SWEEP_KEY.to_owned());
+        all.push(RECORD_STREAM.to_owned());
         let echo_payload = match echo {
             Some(event) => {
                 serde_json::to_string(event).map_err(|e| ValkeyError::Unexpected(e.to_string()))?
@@ -195,6 +233,7 @@ impl Store {
             s(now_ms),
             s(if forward { "1" } else { "0" }),
             s(echo_payload),
+            blob(records),
         ];
         let reply: Vec<Value> = self
             .valkey
@@ -216,14 +255,16 @@ impl Store {
         })
     }
 
-    /// Emite un mensaje secuenciado. `dedupe` = (llave, ttl) para eventos que
-    /// pueden llegar repetidos (del C5).
+    /// Emite un mensaje secuenciado junto con sus registros. `dedupe` =
+    /// (llave, ttl) para eventos que pueden llegar repetidos (del C5): si es
+    /// repetido, no se emite ni se registra de nuevo.
     pub async fn emit(
         &self,
         session_id: Uuid,
         event: &ServerEvent,
         dedupe: Option<(&str, Duration)>,
         fields: &[(&str, String)],
+        records: &[String],
     ) -> Result<EmitOutcome, ValkeyError> {
         let keys = SessionKeys::new(session_id);
         let mut all = keys.data();
@@ -232,9 +273,15 @@ impl Store {
             None => (NO_DEDUPE.to_owned(), Duration::ZERO),
         };
         all.push(dedupe_key);
+        all.push(RECORD_STREAM.to_owned());
         let payload =
             serde_json::to_string(event).map_err(|e| ValkeyError::Unexpected(e.to_string()))?;
-        let mut args = vec![s(session_id), s(payload), s(dedupe_ttl.as_millis().max(1))];
+        let mut args = vec![
+            s(session_id),
+            s(payload),
+            s(dedupe_ttl.as_millis().max(1)),
+            blob(records),
+        ];
         for (field, value) in fields {
             args.push(s(field));
             args.push(s(value));

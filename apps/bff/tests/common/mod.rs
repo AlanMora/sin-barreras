@@ -5,13 +5,18 @@
 
 use std::{collections::HashMap, net::SocketAddr, sync::Arc, time::Duration};
 
+use std::sync::OnceLock;
+
 use bff::{
     AppState,
     c5::memory::InMemoryGateway,
     config::{C5Config, Config, SessionConfig, ValkeyConfig},
-    recorder::MemoryRecorder,
+    records::RecordKeys,
     valkey::Valkey,
 };
+use crypto::{OperationalKey, RecipientPrivateKey, generate_recipient_keypair};
+use events::{RECORD_STREAM, RecordEvent, StreamRecord, WrappedKeyData, open::open_sealed};
+use fred::interfaces::StreamsInterface;
 use futures::{SinkExt, StreamExt};
 use protocol::{SequencedMessage, ServerControl, ServerEvent, ServerFrame, Welcome};
 use serde_json::{Value, json};
@@ -25,6 +30,81 @@ use uuid::Uuid;
 
 pub const QR_KEY: [u8; 32] = [7; 32];
 
+/// Llaves del registro compartidas por todas las pruebas: (privada, públicas+operativas).
+fn test_keys() -> &'static (String, RecordKeys) {
+    static KEYS: OnceLock<(String, RecordKeys)> = OnceLock::new();
+    KEYS.get_or_init(|| {
+        let (private, public) = generate_recipient_keypair("inv-test");
+        let operational = vec![OperationalKey::new("op-test", &[5; 32]).unwrap()];
+        (
+            private.to_spec().to_string(),
+            RecordKeys {
+                recipient: public,
+                operational,
+            },
+        )
+    })
+}
+
+/// Lo que quedó en el stream del registro, ya descifrado con la llave privada.
+pub struct RecordedStream {
+    pub events: Vec<RecordEvent>,
+    /// JSON tal como quedó en Valkey (para comprobar que no hay texto en claro).
+    pub raw: Vec<String>,
+}
+
+pub async fn read_records(valkey_url: &str) -> RecordedStream {
+    let client = valkey_client::connect(&ValkeyConfig::plain(valkey_url))
+        .await
+        .unwrap();
+    let entries: Vec<(String, HashMap<String, String>)> = client
+        .xrange_values(RECORD_STREAM, "-", "+", None)
+        .await
+        .unwrap();
+    let raw: Vec<String> = entries
+        .into_iter()
+        .filter_map(|(_, mut f)| f.remove("e"))
+        .collect();
+    let records: Vec<StreamRecord> = raw
+        .iter()
+        .map(|r| serde_json::from_str(r).unwrap())
+        .collect();
+    let session_keys: HashMap<Uuid, WrappedKeyData> = records
+        .iter()
+        .filter_map(|r| {
+            Some((
+                r.event.session_id?,
+                WrappedKeyData::from_session_key_event(&r.event)?,
+            ))
+        })
+        .collect();
+    let private = RecipientPrivateKey::parse(&test_keys().0).unwrap();
+    let events = records
+        .into_iter()
+        .map(|r| {
+            let mut event = r.event;
+            if let Some(sealed) = &r.sealed {
+                let key = event.session_id.and_then(|s| session_keys.get(&s));
+                event.sensitive =
+                    Some(open_sealed(&event, sealed, key, &private).expect("descifrar"));
+            }
+            event
+        })
+        .collect();
+    RecordedStream { events, raw }
+}
+
+/// Espera a que el registro contenga un evento que cumpla `pred`.
+pub async fn wait_record(valkey_url: &str, pred: impl Fn(&RecordEvent) -> bool) -> RecordedStream {
+    for _ in 0..60 {
+        let stream = read_records(valkey_url).await;
+        if stream.events.iter().any(&pred) {
+            return stream;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    panic!("el evento esperado nunca llegó al registro");
+}
 pub async fn start_valkey() -> (ContainerAsync<ValkeyImage>, String) {
     let container = ValkeyImage::default()
         .with_tag("9.1-alpine")
@@ -43,7 +123,6 @@ pub async fn start_valkey() -> (ContainerAsync<ValkeyImage>, String) {
 pub struct TestBff {
     pub addr: SocketAddr,
     pub gateway: Arc<InMemoryGateway>,
-    pub recorder: Arc<MemoryRecorder>,
     pub state: Arc<AppState>,
     shutdown: Option<oneshot::Sender<()>>,
     thread: Option<std::thread::JoinHandle<()>>,
@@ -72,12 +151,11 @@ impl TestBff {
             qr_keys: HashMap::from([("1".to_owned(), QR_KEY.to_vec())]),
             allowed_origins: vec!["http://localhost:5173".to_owned()],
             forward_lease_ttl: Duration::from_secs(2),
+            record_keys: test_keys().1.clone(),
         };
-        let recorder = Arc::new(MemoryRecorder::default());
         let (ready_tx, ready_rx) = oneshot::channel();
         let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
         let gw = Arc::clone(&gateway);
-        let rec = Arc::clone(&recorder);
         let thread = std::thread::spawn(move || {
             let runtime = tokio::runtime::Builder::new_multi_thread()
                 .enable_all()
@@ -87,7 +165,7 @@ impl TestBff {
                 let valkey = Valkey::connect(&config.valkey)
                     .await
                     .expect("conectar a Valkey");
-                let state = AppState::new(config, valkey, gw, rec);
+                let state = AppState::new(config, valkey, gw);
                 let _bg = bff::spawn_background(&state);
                 let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
                     .await
@@ -108,7 +186,6 @@ impl TestBff {
         Self {
             addr,
             gateway,
-            recorder,
             state,
             shutdown: Some(shutdown_tx),
             thread: Some(thread),

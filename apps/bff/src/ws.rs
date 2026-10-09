@@ -36,7 +36,8 @@ use crate::{
     AppState,
     forwarder::{self, ID_NAMESPACE, location_payload, producer},
     hub::LiveFrame,
-    store::{AcceptOutcome, ResumeOutcome},
+    records::SEQ_PLACEHOLDER,
+    store::{AcceptCommand, AcceptOutcome, ResumeOutcome},
     token,
 };
 
@@ -187,7 +188,7 @@ impl Connection {
         };
         let session_id = established.session_id;
         if !dropped.is_empty() {
-            state.recorder.record(
+            state.records.record(
                 RecordEvent::new(EventKind::FieldsDropped, producer(&state))
                     .session(session_id)
                     .attr("message_type", "hello")
@@ -227,7 +228,7 @@ impl Connection {
         if conn.catch_up().await.is_err() {
             return;
         }
-        state.recorder.record(
+        state.records.record(
             RecordEvent::new(EventKind::ConnectionOpened, producer(&state))
                 .session(session_id)
                 .attr("resumed", established.resumed)
@@ -236,7 +237,7 @@ impl Connection {
 
         // 4. bucle principal
         let reason = conn.main_loop(&mut stream, &mut live).await;
-        state.recorder.record(
+        state.records.record(
             RecordEvent::new(EventKind::ConnectionClosed, producer(&state))
                 .session(session_id)
                 .attr("reason", reason)
@@ -403,7 +404,7 @@ impl Connection {
         };
         let dropped = message.sanitize();
         if !dropped.is_empty() {
-            self.state.recorder.record(
+            self.state.records.record(
                 RecordEvent::new(EventKind::FieldsDropped, producer(&self.state))
                     .session(self.session_id)
                     .attr("message_type", message.kind())
@@ -448,7 +449,7 @@ impl Connection {
                     .store
                     .set_fields(self.session_id, &[("last_ack_seq", ack.seq.to_string())])
                     .await;
-                self.state.recorder.record(
+                self.state.records.record(
                     RecordEvent::new(EventKind::ClientAck, producer(&self.state))
                         .session(self.session_id)
                         .client_ts(ack.client_ts)
@@ -491,21 +492,29 @@ impl Connection {
             }
         };
 
+        // El registro del comando se escribe en la MISMA operación atómica que
+        // lo acepta: no puede existir uno sin el otro.
+        let records = match self.accepted_record(&message) {
+            Some(event) => self.state.records.encode_all(vec![event]).await,
+            None => Vec::new(),
+        };
         let outcome = self
             .state
             .store
             .accept(
                 self.session_id,
-                cmid,
-                &json,
-                now.unix_millis(),
-                forward,
-                echo.as_ref(),
+                AcceptCommand {
+                    client_msg_id: cmid,
+                    message_json: &json,
+                    now_ms: now.unix_millis(),
+                    forward,
+                    echo: echo.as_ref(),
+                    records: &records,
+                },
             )
             .await;
         match outcome {
-            Ok(AcceptOutcome::Accepted { echo_seq }) => {
-                self.record_accepted(&message, echo_seq);
+            Ok(AcceptOutcome::Accepted { .. }) => {
                 if forward {
                     forwarder::kick(&self.state, self.session_id);
                 }
@@ -552,7 +561,8 @@ impl Connection {
         }
     }
 
-    fn record_accepted(&self, message: &ClientMessage, echo_seq: Option<u64>) {
+    /// Evento de registro de un comando aceptado (con su contenido).
+    fn accepted_record(&self, message: &ClientMessage) -> Option<RecordEvent> {
         let state = &self.state;
         let cmid = message.client_msg_id().to_string();
         let event = match message {
@@ -572,7 +582,8 @@ impl Connection {
                         "quick_reply",
                         serde_json::to_value(m.quick_reply).unwrap_or_default(),
                     )
-                    .attr("seq", echo_seq)
+                    // Valkey sustituye el marcador por el seq real del eco.
+                    .attr("seq", SEQ_PLACEHOLDER)
                     .sensitive(SensitivePayload::Message {
                         text: m.text.clone(),
                     })
@@ -601,15 +612,15 @@ impl Connection {
                 .client_ts(m.client_ts)
                 .attr("event", "close_requested")
                 .attr("detail", serde_json::to_value(m.reason).unwrap_or_default()),
-            ClientMessage::Hello(_) | ClientMessage::Ack(_) | ClientMessage::Ping(_) => return,
+            ClientMessage::Hello(_) | ClientMessage::Ack(_) | ClientMessage::Ping(_) => {
+                return None;
+            }
         };
-        state
-            .recorder
-            .record(event.session(self.session_id).attr("client_msg_id", cmid));
+        Some(event.session(self.session_id).attr("client_msg_id", cmid))
     }
 
     fn record_protocol_error(&self, stage: &str, reason: String, client_msg_id: Option<Uuid>) {
-        self.state.recorder.record(
+        self.state.records.record(
             RecordEvent::new(EventKind::ProtocolError, producer(&self.state))
                 .session(self.session_id)
                 .attr("stage", stage)
@@ -642,15 +653,28 @@ async fn establish_session(
     let now = Timestamp::now();
 
     if let Some(resume) = &hello.resume {
+        // Los registros de la reanudación se escriben solo si se reanuda
+        // (dentro del mismo script).
+        let records = state
+            .records
+            .encode_all(vec![
+                RecordEvent::new(EventKind::SessionResumed, producer(state))
+                    .session(resume.session_id)
+                    .client_ts(hello.client_ts)
+                    .attr("client_last_seq", resume.last_seq),
+                metadata_event(state, resume.session_id, hello, network),
+            ])
+            .await;
         let outcome = state
             .store
             .resume_session(
                 resume.session_id,
                 &token::hash(&resume.session_token),
                 &token_hash,
+                &records,
             )
             .await?;
-        if let ResumeOutcome::Resumed { latest_seq } = outcome {
+        if let ResumeOutcome::Resumed { .. } = outcome {
             let entry = state
                 .store
                 .session_fields(resume.session_id)
@@ -662,14 +686,6 @@ async fn establish_session(
                     _ => EntryVerification::None,
                 })
                 .unwrap_or(EntryVerification::None);
-            state.recorder.record(
-                RecordEvent::new(EventKind::SessionResumed, producer(state))
-                    .session(resume.session_id)
-                    .client_ts(hello.client_ts)
-                    .attr("client_last_seq", resume.last_seq)
-                    .attr("latest_seq", latest_seq),
-            );
-            record_metadata(state, resume.session_id, hello, network);
             return Ok(Established {
                 session_id: resume.session_id,
                 token,
@@ -677,7 +693,7 @@ async fn establish_session(
                 entry,
             });
         }
-        state.recorder.record(
+        state.records.record(
             RecordEvent::new(EventKind::SessionResumeRejected, producer(state))
                 .attr("requested_session_id", resume.session_id.to_string())
                 .attr("reason", format!("{outcome:?}").to_lowercase()),
@@ -691,13 +707,35 @@ async fn establish_session(
         .as_ref()
         .map(|e| e.point_id.clone())
         .unwrap_or_default();
+    let key = state.records.new_session_key(session_id)?;
     let fields = vec![
         ("entry_point", point_id.clone()),
         ("entry_status", entry.as_str().to_owned()),
         ("language", hello.language.clone()),
         ("app_version", hello.app_version.clone()),
         ("protocol_version", hello.protocol_version.to_string()),
+        ("dek", key.operational_wrapped),
     ];
+    // La llave de la sesión va primero: todo lo demás se cifra con ella.
+    let records = state
+        .records
+        .encode_all(vec![
+            key.event,
+            RecordEvent::new(EventKind::SessionStarted, producer(state))
+                .session(session_id)
+                .client_ts(hello.client_ts),
+            RecordEvent::new(EventKind::EntryPoint, producer(state))
+                .session(session_id)
+                .attr("source", if hello.entry.is_some() { "qr" } else { "web" })
+                .attr("point_id", point_id)
+                .attr(
+                    "key_id",
+                    hello.entry.as_ref().and_then(|e| e.key_id.clone()),
+                )
+                .attr("verification", entry.as_str()),
+            metadata_event(state, session_id, hello, network),
+        ])
+        .await;
     state
         .store
         .create_session(
@@ -706,25 +744,9 @@ async fn establish_session(
             now.unix_millis(),
             state.config.sessions.idle_ttl,
             &fields,
+            &records,
         )
         .await?;
-    state.recorder.record(
-        RecordEvent::new(EventKind::SessionStarted, producer(state))
-            .session(session_id)
-            .client_ts(hello.client_ts),
-    );
-    state.recorder.record(
-        RecordEvent::new(EventKind::EntryPoint, producer(state))
-            .session(session_id)
-            .attr("source", if hello.entry.is_some() { "qr" } else { "web" })
-            .attr("point_id", point_id)
-            .attr(
-                "key_id",
-                hello.entry.as_ref().and_then(|e| e.key_id.clone()),
-            )
-            .attr("verification", entry.as_str()),
-    );
-    record_metadata(state, session_id, hello, network);
     Ok(Established {
         session_id,
         token,
@@ -733,24 +755,28 @@ async fn establish_session(
     })
 }
 
-fn record_metadata(state: &Arc<AppState>, session_id: Uuid, hello: &Hello, network: &NetworkInfo) {
-    state.recorder.record(
-        RecordEvent::new(EventKind::ClientMetadata, producer(state))
-            .session(session_id)
-            .client_ts(hello.client_ts)
-            .trace(hello.traceparent.as_deref())
-            .attr("language", hello.language.clone())
-            .attr("app_version", hello.app_version.clone())
-            .attr("protocol_version", hello.protocol_version)
-            .attr(
-                "accessibility",
-                serde_json::to_value(&hello.accessibility).unwrap_or_default(),
-            )
-            .sensitive(SensitivePayload::Network {
-                ip: network.ip.clone(),
-                user_agent: network.user_agent.clone(),
-            }),
-    );
+/// Metadatos técnicos del cliente. La IP y el user agent van cifrados.
+fn metadata_event(
+    state: &Arc<AppState>,
+    session_id: Uuid,
+    hello: &Hello,
+    network: &NetworkInfo,
+) -> RecordEvent {
+    RecordEvent::new(EventKind::ClientMetadata, producer(state))
+        .session(session_id)
+        .client_ts(hello.client_ts)
+        .trace(hello.traceparent.as_deref())
+        .attr("language", hello.language.clone())
+        .attr("app_version", hello.app_version.clone())
+        .attr("protocol_version", hello.protocol_version)
+        .attr(
+            "accessibility",
+            serde_json::to_value(&hello.accessibility).unwrap_or_default(),
+        )
+        .sensitive(SensitivePayload::Network {
+            ip: network.ip.clone(),
+            user_agent: network.user_agent.clone(),
+        })
 }
 
 type HelloError = (ErrorCode, String, Option<Uuid>);

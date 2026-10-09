@@ -8,6 +8,10 @@
 --   sb:s:{sid}:cmids  HASH    client_msg_id ya recibidos (idempotencia)
 --   sb:s:{sid}:fwd    STRING  lease del reenvío al C5 (réplica dueña)
 
+--
+-- Registro completo (global, SIN TTL — nunca debe pasarse a sb_touch):
+--   sb:rec:events     STREAM  eventos pendientes de guardar en Postgres
+--
 -- Renueva el TTL de todas las llaves de la sesión con el TTL guardado en
 -- la propia sesión (cambia cuando se abre o cierra un incidente).
 local function sb_touch(sess_key, keys)
@@ -28,4 +32,20 @@ local function sb_emit(seq_key, out_key, sid, payload)
   redis.call('XADD', out_key, string.format('%d', seq) .. '-0', 'f', frame)
   redis.call('PUBLISH', 'sb:bus', sid .. '|' .. string.format('%d', seq) .. '|' .. frame)
   return seq
+end
+
+-- Agrega al stream del registro las entradas de `blob` (JSON separados por
+-- salto de línea; el JSON compacto nunca contiene saltos de línea sin
+-- escapar). Si se indica `seq`, sustituye el marcador "__SEQ__" por el seq
+-- asignado, para que el registro diga exactamente qué seq vio el ciudadano.
+local function sb_record(rec_key, blob, seq)
+  if not blob or blob == '' then
+    return
+  end
+  for entry in string.gmatch(blob, '[^\n]+') do
+    if seq then
+      entry = string.gsub(entry, '"__SEQ__"', string.format('%d', seq))
+    end
+    redis.call('XADD', rec_key, '*', 'e', entry)
+  end
 end

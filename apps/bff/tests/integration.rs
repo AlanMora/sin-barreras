@@ -11,6 +11,7 @@ use bff::c5::{
 };
 use common::*;
 use events::{EventKind, SensitivePayload};
+
 use protocol::{
     AckStatus, Author, DeliveryStatus, EntryVerification, ErrorCode, IncidentState, ServerControl,
     ServerEvent, Timestamp,
@@ -100,18 +101,9 @@ async fn full_flow_incident_chat_and_operator_reply() {
     };
     assert_eq!(reply.text, "Te estamos atendiendo. ¿Dónde estás?");
 
-    // Todo quedó registrado, con el contenido en la parte sensible. (El
-    // registro ocurre justo después de emitir; se espera a que termine.)
-    assert!(
-        eventually(Duration::from_secs(2), || {
-            bff.recorder
-                .events()
-                .iter()
-                .any(|e| e.kind == EventKind::FirstOperatorResponse)
-        })
-        .await
-    );
-    let events = bff.recorder.events();
+    // Todo quedó en el stream del registro, con el contenido CIFRADO.
+    let stream = wait_record(&url, |e| e.kind == EventKind::FirstOperatorResponse).await;
+    let events = stream.events;
     let kinds: Vec<_> = events.iter().map(|e| e.kind).collect();
     for expected in [
         EventKind::SessionStarted,
@@ -156,6 +148,77 @@ async fn full_flow_incident_chat_and_operator_reply() {
         &metadata.sensitive,
         Some(SensitivePayload::Network { ip: Some(_), .. })
     ));
+    // El eco del mensaje y su registro dicen el mismo seq (lo asigna Valkey).
+    assert_eq!(citizen.attributes["seq"], 3);
+    let operator = events
+        .iter()
+        .find(|e| e.kind == EventKind::OperatorMessage)
+        .unwrap();
+    assert_eq!(
+        operator.sensitive,
+        Some(SensitivePayload::Message {
+            text: "Te estamos atendiendo. ¿Dónde estás?".into()
+        })
+    );
+    // En Valkey no hay contenido en claro: ni mensajes ni IP.
+    for raw in &stream.raw {
+        assert!(
+            !raw.contains("Necesito ayuda")
+                && !raw.contains("Dónde estás")
+                && !raw.contains("127.0.0.1"),
+            "{raw}"
+        );
+    }
+    // El stream del registro NUNCA expira (sus eventos esperan a record-writer).
+    let client = valkey_client::connect(&valkey_client::ValkeyConfig::plain(&url))
+        .await
+        .unwrap();
+    let ttl: i64 = fred::interfaces::KeysInterface::pttl(&client, events::RECORD_STREAM)
+        .await
+        .unwrap();
+    assert_eq!(ttl, -1);
+}
+
+#[tokio::test]
+async fn each_record_is_written_exactly_once_even_with_duplicates_and_two_replicas() {
+    let (_valkey, url) = start_valkey().await;
+    let gateway = Arc::new(InMemoryGateway::default());
+    let a = TestBff::start(&url, "bff-a", Arc::clone(&gateway)).await;
+    let _b = TestBff::start(&url, "bff-b", Arc::clone(&gateway)).await;
+    let mut client = Client::connect(a.addr).await;
+    client.hello(json!({})).await;
+
+    let id = uuid::Uuid::new_v4();
+    let message =
+        json!({ "type": "chat_message", "client_msg_id": id, "kind": "text", "text": "ayuda" });
+    client.send(message.clone()).await;
+    client.recv_control().await;
+    client.send(message).await; // reenvío por reconexión
+    client.recv_control().await;
+    let c5_id = loop {
+        if let Some(id) = c5_incident_id(&gateway) {
+            break id;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    };
+    // Las dos réplicas reciben el mismo evento del C5.
+    gateway.push_event(operator_message(&c5_id, "EVT-DUP", "recibido"));
+    wait_record(&url, |e| e.kind == EventKind::OperatorMessage).await;
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    let stream = read_records(&url).await.events;
+    let count = |kind: EventKind| stream.iter().filter(|e| e.kind == kind).count();
+    assert_eq!(
+        count(EventKind::CitizenMessage),
+        1,
+        "el reenvío no se registra dos veces"
+    );
+    assert_eq!(
+        count(EventKind::OperatorMessage),
+        1,
+        "el evento del C5 se registra una vez aunque lo vean 2 réplicas"
+    );
+    assert_eq!(count(EventKind::SessionKeyCreated), 1);
+    assert_eq!(count(EventKind::IncidentCreated), 1);
 }
 
 #[tokio::test]

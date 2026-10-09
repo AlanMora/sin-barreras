@@ -1,9 +1,10 @@
 //! Eventos que llegan del C5: mensajes del operador, estados de entrega,
 //! cambios de estado del incidente y datos de la videollamada.
 //!
-//! Todas las réplicas consumen el flujo; cada evento se emite una sola vez
-//! gracias a la llave de deduplicación `sb:c5e:<event_id>` dentro del script
-//! `emit` (atómico). Así, si una réplica cae, las demás siguen entregando.
+//! Todas las réplicas consumen el flujo; cada evento se emite y se registra
+//! una sola vez gracias a la llave de deduplicación `sb:c5e:<event_id>`
+//! dentro del script `emit` (atómico). Así, si una réplica cae, las demás
+//! siguen entregando.
 
 use std::{sync::Arc, time::Duration};
 
@@ -13,13 +14,14 @@ use protocol::{
     Author, ChatKind, IncidentState, IncidentStatus, MessageStatus, ServerChatMessage, ServerEvent,
     Timestamp, VideoCallUpdate,
 };
+use service_kit::backoff::Backoff;
 use uuid::Uuid;
 
 use crate::{
     AppState,
-    backoff::Backoff,
     c5::{C5InboundEvent, C5InboundKind},
     forwarder::{ID_NAMESPACE, producer},
+    records::SEQ_PLACEHOLDER,
     store::EmitOutcome,
     valkey::{ValkeyError, c5_event_key},
 };
@@ -41,22 +43,13 @@ pub async fn run(state: Arc<AppState>) {
     tracing::error!("el flujo de eventos del C5 terminó inesperadamente");
 }
 
-pub async fn handle(state: &Arc<AppState>, event: &C5InboundEvent) -> Result<(), ValkeyError> {
-    let Some(session_id) = state
-        .store
-        .session_for_c5_incident(&event.c5_incident_id)
-        .await?
-    else {
-        state.recorder.record(
-            RecordEvent::new(EventKind::C5OrphanEvent, producer(state))
-                .incident(None, Some(event.c5_incident_id.clone()))
-                .attr("c5_event_id", event.event_id.clone()),
-        );
-        return Ok(());
-    };
-
-    let now = Timestamp::now();
-    let mut fields: Vec<(&str, String)> = Vec::new();
+/// Traduce un evento del C5 al mensaje para el ciudadano y a su registro.
+fn translate(
+    state: &AppState,
+    event: &C5InboundEvent,
+    now: Timestamp,
+) -> (ServerEvent, RecordEvent, Vec<(&'static str, String)>) {
+    let mut fields = Vec::new();
     let (server_event, record) = match &event.kind {
         C5InboundKind::OperatorMessage {
             c5_message_id,
@@ -120,6 +113,8 @@ pub async fn handle(state: &Arc<AppState>, event: &C5InboundEvent) -> Result<(),
                 .attr("client_msg_id", idempotency_key.to_string())
                 .attr("status", serde_json::to_value(status).unwrap_or_default());
             if let Some(data) = join {
+                // Los datos de la sala (y la referencia a la grabación, cuando
+                // exista) se guardan cifrados.
                 record = record.sensitive(SensitivePayload::VideoCall { data: data.clone() });
             }
             (
@@ -133,7 +128,40 @@ pub async fn handle(state: &Arc<AppState>, event: &C5InboundEvent) -> Result<(),
             )
         }
     };
+    (server_event, record, fields)
+}
 
+pub async fn handle(state: &Arc<AppState>, event: &C5InboundEvent) -> Result<(), ValkeyError> {
+    let Some(session_id) = state
+        .store
+        .session_for_c5_incident(&event.c5_incident_id)
+        .await?
+    else {
+        state.records.record(
+            RecordEvent::new(EventKind::C5OrphanEvent, producer(state))
+                .incident(None, Some(event.c5_incident_id.clone()))
+                .attr("c5_event_id", event.event_id.clone()),
+        );
+        return Ok(());
+    };
+
+    let now = Timestamp::now();
+    let session = state.store.session_fields(session_id).await?;
+    let incident_id = session.get("incident_id").and_then(|v| v.parse().ok());
+    let (server_event, record, fields) = translate(state, event, now);
+    // El registro va en la misma operación atómica que la emisión y su
+    // deduplicación: un evento repetido del C5 no se emite ni se registra dos veces.
+    let records = state
+        .records
+        .encode_all(vec![
+            record
+                .session(session_id)
+                .incident(incident_id, Some(event.c5_incident_id.clone()))
+                .attr("c5_event_id", event.event_id.clone())
+                .attr("c5_occurred_at", event.occurred_at.to_string())
+                .attr("seq", SEQ_PLACEHOLDER),
+        ])
+        .await;
     let dedupe_key = c5_event_key(&event.event_id);
     let outcome = state
         .store
@@ -142,14 +170,15 @@ pub async fn handle(state: &Arc<AppState>, event: &C5InboundEvent) -> Result<(),
             &server_event,
             Some((&dedupe_key, DEDUPE_TTL)),
             &fields,
+            &records,
         )
         .await?;
-    let seq = match outcome {
-        EmitOutcome::Emitted(seq) => seq,
-        // Repetido (otra réplica ya lo emitió) o sesión expirada.
+    match outcome {
+        EmitOutcome::Emitted(_) => {}
+        // Repetido: otra réplica ya lo emitió y registró.
         EmitOutcome::Duplicate => return Ok(()),
         EmitOutcome::SessionGone => {
-            state.recorder.record(
+            state.records.record(
                 RecordEvent::new(EventKind::C5OrphanEvent, producer(state))
                     .session(session_id)
                     .incident(None, Some(event.c5_incident_id.clone()))
@@ -158,22 +187,7 @@ pub async fn handle(state: &Arc<AppState>, event: &C5InboundEvent) -> Result<(),
             );
             return Ok(());
         }
-    };
-
-    let session = state
-        .store
-        .session_fields(session_id)
-        .await
-        .unwrap_or_default();
-    let incident_id = session.get("incident_id").and_then(|v| v.parse().ok());
-    state.recorder.record(
-        record
-            .session(session_id)
-            .incident(incident_id, Some(event.c5_incident_id.clone()))
-            .attr("c5_event_id", event.event_id.clone())
-            .attr("c5_occurred_at", event.occurred_at.to_string())
-            .attr("seq", seq),
-    );
+    }
 
     // Primera respuesta del operador: métrica clave del programa.
     if matches!(event.kind, C5InboundKind::OperatorMessage { .. })
@@ -190,7 +204,7 @@ pub async fn handle(state: &Arc<AppState>, event: &C5InboundEvent) -> Result<(),
             .get("incident_created_at")
             .and_then(|v| v.parse::<i64>().ok())
             .map(|created| now.unix_millis() - created);
-        state.recorder.record(
+        state.records.record(
             RecordEvent::new(EventKind::FirstOperatorResponse, producer(state))
                 .session(session_id)
                 .incident(incident_id, Some(event.c5_incident_id.clone()))

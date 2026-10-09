@@ -1,16 +1,17 @@
 //! Reenvío durable y ordenado de los comandos del ciudadano al C5.
 //!
-//! Garantías:
+//! Garantías (ADR-0011):
 //! - **No pérdida**: un comando se confirma al ciudadano solo cuando ya está
 //!   en el stream `sb:s:{sid}:in` de Valkey (ver `accept.lua`). El forwarder
 //!   lo saca de ahí; si la réplica muere a medias, otra lo retoma.
 //! - **Orden**: por sesión hay un solo forwarder a la vez (lease en Valkey) y
 //!   procesa los comandos en el orden en que se aceptaron.
 //! - **Sin duplicados en el C5**: cada llamada lleva como llave de
-//!   idempotencia el `client_msg_id`; si dos réplicas llegaran a reenviar lo
-//!   mismo (lease vencido por una llamada lenta), el C5 no lo duplica.
+//!   idempotencia el `client_msg_id`.
 //! - **Persistencia ante fallas del C5**: las fallas temporales se reintentan
 //!   indefinidamente con backoff mientras la réplica conserve el lease.
+//! - **Registro atómico**: lo que ve el ciudadano (incidente creado, entregado,
+//!   fallido…) se registra en la misma operación que se le emite.
 
 use std::{
     collections::HashMap,
@@ -21,16 +22,17 @@ use std::{
 
 use events::{EventKind, RecordEvent, SensitivePayload};
 use protocol::{
-    Channel, ClientCloseReason, ClientMessage, DeliveryStatus, IncidentCreated, IncidentState,
-    IncidentStatus, MessageStatus, ServerEvent, SessionClosed, SessionClosedReason, Timestamp,
-    VideoCallState, VideoCallUpdate,
+    Channel, ChatKind, ClientCloseReason, ClientMessage, DeliveryStatus, IncidentCreated,
+    IncidentState, IncidentStatus, LocationSource, MessageStatus, ServerEvent, SessionClosed,
+    SessionClosedReason, Timestamp, VideoCallState, VideoCallUpdate,
 };
+use service_kit::backoff::Backoff;
 use uuid::Uuid;
 
 use crate::{
     AppState,
-    backoff::Backoff,
     c5::{C5Error, LocationReport, NewIncident, OutboundMessage, VideoCallRequest},
+    records::SEQ_PLACEHOLDER,
     store::{PendingCommand, ReleaseOutcome},
     valkey::ValkeyError,
 };
@@ -200,8 +202,7 @@ async fn process(
         Err(error) => {
             // No debería pasar: el BFF guardó este JSON. Se registra y se salta.
             tracing::error!(%session_id, %error, "comando ilegible en el stream de entrada");
-            mark(state, session_id, &command.stream_id, &[]).await?;
-            return Ok(());
+            return mark(state, session_id, &command.stream_id, &[]).await;
         }
     };
     let cmid = message.client_msg_id();
@@ -217,20 +218,21 @@ async fn process(
         }
         ClientMessage::ChatMessage(m) => {
             let channel = ctx.channel().unwrap_or(match m.kind {
-                protocol::ChatKind::QuickReply => Channel::Silent,
-                protocol::ChatKind::Text => Channel::TextChat,
+                ChatKind::QuickReply => Channel::Silent,
+                ChatKind::Text => Channel::TextChat,
             });
-            let c5_incident_id =
-                match ensure_incident(state, session_id, ctx, channel, cmid, None).await? {
-                    Some(id) => id,
-                    None => {
-                        emit_status(state, session_id, cmid, DeliveryStatus::Failed).await?;
-                        return mark(state, session_id, &command.stream_id, &[]).await;
-                    }
-                };
+            let Some(c5_incident_id) =
+                ensure_incident(state, session_id, ctx, channel, cmid, None).await?
+            else {
+                let record = base(state, EventKind::CitizenMessageFailed, session_id, ctx)
+                    .attr("client_msg_id", cmid.to_string())
+                    .attr("reason", "incident_not_created");
+                emit_status(state, session_id, cmid, DeliveryStatus::Failed, record).await?;
+                return mark(state, session_id, &command.stream_id, &[]).await;
+            };
             let outbound = OutboundMessage {
                 idempotency_key: cmid,
-                c5_incident_id: c5_incident_id.clone(),
+                c5_incident_id,
                 kind: m.kind,
                 text: m.text.clone(),
                 quick_reply: m.quick_reply,
@@ -242,49 +244,37 @@ async fn process(
             .await?
             {
                 Ok(c5_message_id) => {
-                    emit_status(state, session_id, cmid, DeliveryStatus::Delivered).await?;
-                    state.recorder.record(
-                        base(state, EventKind::CitizenMessageForwarded, session_id, ctx)
-                            .attr("client_msg_id", cmid.to_string())
-                            .attr("c5_message_id", c5_message_id),
-                    );
+                    let record = base(state, EventKind::CitizenMessageForwarded, session_id, ctx)
+                        .attr("client_msg_id", cmid.to_string())
+                        .attr("c5_message_id", c5_message_id);
+                    emit_status(state, session_id, cmid, DeliveryStatus::Delivered, record).await?;
                 }
                 Err(reason) => {
-                    emit_status(state, session_id, cmid, DeliveryStatus::Failed).await?;
-                    state.recorder.record(
-                        base(state, EventKind::CitizenMessageFailed, session_id, ctx)
-                            .attr("client_msg_id", cmid.to_string())
-                            .attr("reason", reason),
-                    );
+                    let record = base(state, EventKind::CitizenMessageFailed, session_id, ctx)
+                        .attr("client_msg_id", cmid.to_string())
+                        .attr("reason", reason);
+                    emit_status(state, session_id, cmid, DeliveryStatus::Failed, record).await?;
                 }
             }
         }
-        ClientMessage::LocationUpdate(m) => {
-            match ctx.c5_incident_id() {
-                Some(c5_incident_id) => {
-                    let report = LocationReport {
-                        idempotency_key: cmid,
-                        c5_incident_id,
-                        latitude: m.latitude,
-                        longitude: m.longitude,
-                        accuracy_m: m.accuracy_m,
-                        source: source_name(m.source).to_owned(),
-                        captured_at: m.captured_at,
-                    };
-                    forward_location(state, session_id, ctx, report).await?;
-                }
-                None => {
-                    // Aún no hay incidente: se guarda la más reciente y se envía al crearlo.
-                    fields.push(("pending_location", command.message_json.clone()));
-                }
+        ClientMessage::LocationUpdate(m) => match ctx.c5_incident_id() {
+            Some(c5_incident_id) => {
+                let report = location_report(m, c5_incident_id);
+                forward_location(state, session_id, ctx, report).await?;
             }
-        }
+            // Aún no hay incidente: se guarda la más reciente y se envía al crearlo.
+            None => fields.push(("pending_location", command.message_json.clone())),
+        },
         ClientMessage::VideoCallRequest(_) => {
             let channel = ctx.channel().unwrap_or(Channel::LsmVideo);
             let Some(c5_incident_id) =
                 ensure_incident(state, session_id, ctx, channel, cmid, None).await?
             else {
-                emit_video(state, session_id, cmid, VideoCallState::Failed).await?;
+                let record = base(state, EventKind::VideoCallUpdated, session_id, ctx)
+                    .attr("client_msg_id", cmid.to_string())
+                    .attr("status", "failed")
+                    .attr("reason", "incident_not_created");
+                emit_video(state, session_id, cmid, VideoCallState::Failed, record).await?;
                 return mark(state, session_id, &command.stream_id, &[]).await;
             };
             let request = VideoCallRequest {
@@ -297,49 +287,43 @@ async fn process(
             .await?
             {
                 Ok(video_call_id) => {
-                    emit_video(state, session_id, cmid, VideoCallState::Requested).await?;
-                    state.recorder.record(
-                        base(state, EventKind::VideoCallRequested, session_id, ctx)
-                            .attr("client_msg_id", cmid.to_string())
-                            .attr("c5_video_call_id", video_call_id)
-                            .attr("stage", "forwarded"),
-                    );
+                    let record = base(state, EventKind::VideoCallRequested, session_id, ctx)
+                        .attr("client_msg_id", cmid.to_string())
+                        .attr("c5_video_call_id", video_call_id)
+                        .attr("stage", "forwarded");
+                    emit_video(state, session_id, cmid, VideoCallState::Requested, record).await?;
                 }
                 Err(reason) => {
-                    emit_video(state, session_id, cmid, VideoCallState::Failed).await?;
-                    state.recorder.record(
-                        base(state, EventKind::VideoCallUpdated, session_id, ctx)
-                            .attr("client_msg_id", cmid.to_string())
-                            .attr("status", "failed")
-                            .attr("reason", reason),
-                    );
+                    let record = base(state, EventKind::VideoCallUpdated, session_id, ctx)
+                        .attr("client_msg_id", cmid.to_string())
+                        .attr("status", "failed")
+                        .attr("reason", reason);
+                    emit_video(state, session_id, cmid, VideoCallState::Failed, record).await?;
                 }
             }
         }
         ClientMessage::Close(m) => {
             let reason = match m.reason {
-                ClientCloseReason::EndedByCitizen => SessionClosedReason::EndedByCitizen,
-                ClientCloseReason::AbandonedBeforeHelp => SessionClosedReason::EndedByCitizen,
+                ClientCloseReason::EndedByCitizen | ClientCloseReason::AbandonedBeforeHelp => {
+                    SessionClosedReason::EndedByCitizen
+                }
             };
+            let record = base(state, EventKind::SessionClosed, session_id, ctx)
+                .attr("reason", serde_json::to_value(m.reason).unwrap_or_default())
+                .attr("by", "citizen");
             let event = ServerEvent::SessionClosed(SessionClosed {
                 reason,
                 server_ts: Timestamp::now(),
             });
             let idle_ttl = state.config.sessions.idle_ttl.as_millis().to_string();
-            state
-                .store
-                .emit(
-                    session_id,
-                    &event,
-                    None,
-                    &[("closed", "1".into()), ("ttl_ms", idle_ttl)],
-                )
-                .await?;
-            state.recorder.record(
-                base(state, EventKind::SessionClosed, session_id, ctx)
-                    .attr("reason", serde_json::to_value(m.reason).unwrap_or_default())
-                    .attr("by", "citizen"),
-            );
+            emit_recorded(
+                state,
+                session_id,
+                &event,
+                &[("closed", "1".into()), ("ttl_ms", idle_ttl)],
+                record,
+            )
+            .await?;
         }
         // Estos tipos nunca entran al stream de reenvío.
         ClientMessage::Hello(_)
@@ -402,7 +386,7 @@ async fn ensure_incident(
     {
         Ok(id) => id,
         Err(reason) => {
-            state.recorder.record(
+            state.records.record(
                 base(state, EventKind::C5CallFailed, session_id, ctx)
                     .attr("operation", "create_incident")
                     .attr("final", true)
@@ -429,47 +413,38 @@ async fn ensure_incident(
         ("incident_created_at", now.unix_millis().to_string()),
         ("ttl_ms", incident_ttl.as_millis().to_string()),
     ];
+    for (field, value) in &new_fields {
+        ctx.fields.insert((*field).to_owned(), value.clone());
+    }
+    // Identificadores cruzados (nuestro incidente ↔ el del C5) en el mismo
+    // registro atómico que avisa al ciudadano.
+    let record = base(state, EventKind::IncidentCreated, session_id, ctx)
+        .attr("channel", channel.as_str())
+        .attr("cause_client_msg_id", cause.to_string())
+        .attr("entry_point", ctx.get("entry_point").unwrap_or_default())
+        .attr("entry_status", entry_status);
     let created = ServerEvent::IncidentCreated(IncidentCreated {
         incident_id,
         channel,
         client_msg_id: cause,
         server_ts: now,
     });
-    state
-        .store
-        .emit(session_id, &created, None, &new_fields)
-        .await?;
+    emit_recorded(state, session_id, &created, &new_fields, record).await?;
+    let record =
+        base(state, EventKind::IncidentStatusChanged, session_id, ctx).attr("status", "received");
     let status = ServerEvent::IncidentStatus(IncidentStatus {
         status: IncidentState::Received,
         eta_seconds: None,
         server_ts: now,
     });
-    state.store.emit(session_id, &status, None, &[]).await?;
-    for (field, value) in new_fields {
-        ctx.fields.insert(field.to_owned(), value);
-    }
-    state.recorder.record(
-        base(state, EventKind::IncidentCreated, session_id, ctx)
-            .attr("channel", channel.as_str())
-            .attr("cause_client_msg_id", cause.to_string())
-            .attr("entry_point", ctx.get("entry_point").unwrap_or_default())
-            .attr("entry_status", entry_status),
-    );
+    emit_recorded(state, session_id, &status, &[], record).await?;
 
     // Ubicación GPS que llegó antes del incidente.
     if let Some(pending) = ctx.get("pending_location").map(str::to_owned)
         && let Ok(ClientMessage::LocationUpdate(m)) =
             serde_json::from_str::<ClientMessage>(&pending)
     {
-        let report = LocationReport {
-            idempotency_key: m.client_msg_id,
-            c5_incident_id: c5_incident_id.clone(),
-            latitude: m.latitude,
-            longitude: m.longitude,
-            accuracy_m: m.accuracy_m,
-            source: source_name(m.source).to_owned(),
-            captured_at: m.captured_at,
-        };
+        let report = location_report(&m, c5_incident_id.clone());
         forward_location(state, session_id, ctx, report).await?;
         state
             .store
@@ -478,6 +453,18 @@ async fn ensure_incident(
         ctx.fields.remove("pending_location");
     }
     Ok(Some(c5_incident_id))
+}
+
+fn location_report(m: &protocol::LocationUpdate, c5_incident_id: String) -> LocationReport {
+    LocationReport {
+        idempotency_key: m.client_msg_id,
+        c5_incident_id,
+        latitude: m.latitude,
+        longitude: m.longitude,
+        accuracy_m: m.accuracy_m,
+        source: source_name(m.source).to_owned(),
+        captured_at: m.captured_at,
+    }
 }
 
 async fn forward_location(
@@ -493,12 +480,12 @@ async fn forward_location(
     })
     .await?
     {
-        Ok(()) => state.recorder.record(
+        Ok(()) => state.records.record(
             base(state, EventKind::LocationForwarded, session_id, ctx)
                 .attr("client_msg_id", key.to_string())
                 .attr("source", source),
         ),
-        Err(reason) => state.recorder.record(
+        Err(reason) => state.records.record(
             base(state, EventKind::C5CallFailed, session_id, ctx)
                 .attr("operation", "update_location")
                 .attr("final", true)
@@ -538,7 +525,7 @@ where
                 tracing::warn!(%session_id, operation, attempt, "falla temporal del C5; reintentando");
                 // Se registra el 1.º, 2.º, 4.º, 8.º… intento para no inundar el registro.
                 if attempt.is_power_of_two() {
-                    state.recorder.record(
+                    state.records.record(
                         RecordEvent::new(EventKind::C5CallFailed, producer(state))
                             .session(session_id)
                             .attr("operation", operation)
@@ -553,19 +540,38 @@ where
     }
 }
 
+/// Emite al ciudadano y registra, en una sola operación atómica.
+async fn emit_recorded(
+    state: &Arc<AppState>,
+    session_id: Uuid,
+    event: &ServerEvent,
+    fields: &[(&str, String)],
+    record: RecordEvent,
+) -> Result<(), ForwardError> {
+    let records = state
+        .records
+        .encode_all(vec![record.attr("seq", SEQ_PLACEHOLDER)])
+        .await;
+    state
+        .store
+        .emit(session_id, event, None, fields, &records)
+        .await?;
+    Ok(())
+}
+
 async fn emit_status(
     state: &Arc<AppState>,
     session_id: Uuid,
     client_msg_id: Uuid,
     status: DeliveryStatus,
+    record: RecordEvent,
 ) -> Result<(), ForwardError> {
     let event = ServerEvent::MessageStatus(MessageStatus {
         client_msg_id,
         status,
         server_ts: Timestamp::now(),
     });
-    state.store.emit(session_id, &event, None, &[]).await?;
-    Ok(())
+    emit_recorded(state, session_id, &event, &[], record).await
 }
 
 async fn emit_video(
@@ -573,6 +579,7 @@ async fn emit_video(
     session_id: Uuid,
     client_msg_id: Uuid,
     status: VideoCallState,
+    record: RecordEvent,
 ) -> Result<(), ForwardError> {
     let event = ServerEvent::VideoCall(VideoCallUpdate {
         request_client_msg_id: client_msg_id,
@@ -580,19 +587,18 @@ async fn emit_video(
         join: None,
         server_ts: Timestamp::now(),
     });
-    state.store.emit(session_id, &event, None, &[]).await?;
-    Ok(())
+    emit_recorded(state, session_id, &event, &[], record).await
 }
 
-fn source_name(source: protocol::LocationSource) -> &'static str {
+fn source_name(source: LocationSource) -> &'static str {
     match source {
-        protocol::LocationSource::Gps => "gps",
-        protocol::LocationSource::Network => "network",
+        LocationSource::Gps => "gps",
+        LocationSource::Network => "network",
     }
 }
 
 pub fn producer(state: &AppState) -> String {
-    format!("bff/{}", state.config.replica_id)
+    state.records.producer().to_owned()
 }
 
 fn base(state: &AppState, kind: EventKind, session_id: Uuid, ctx: &SessionContext) -> RecordEvent {
@@ -601,7 +607,7 @@ fn base(state: &AppState, kind: EventKind, session_id: Uuid, ctx: &SessionContex
         .incident(ctx.incident_id(), ctx.c5_incident_id())
 }
 
-/// Registro del contenido de una ubicación (para `ws.rs`).
+/// Contenido sensible de una ubicación (para `ws.rs`).
 pub fn location_payload(m: &protocol::LocationUpdate) -> SensitivePayload {
     SensitivePayload::Location {
         latitude: m.latitude,

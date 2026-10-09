@@ -4,24 +4,15 @@
 //! duplicarlo, asignar `seq`, reenviar al C5 en orden) son scripts Lua: Valkey
 //! los ejecuta de forma atómica, así dos réplicas nunca ven un estado a medias.
 
-use std::{path::Path, sync::Arc, time::Duration};
+use std::sync::Arc;
 
 use fred::{
     clients::SubscriberClient,
     prelude::*,
-    rustls::{
-        ClientConfig, RootCertStore,
-        pki_types::{CertificateDer, pem::PemObject},
-    },
-    types::{
-        Value,
-        config::{ReconnectPolicy, TlsConnector},
-        scripts::Script,
-    },
+    types::{Value, scripts::Script},
 };
 use uuid::Uuid;
-
-use crate::config::ValkeyConfig;
+pub use valkey_client::{ValkeyConfig, value_to_string};
 
 const COMMON: &str = include_str!("lua/common.lua");
 
@@ -36,8 +27,8 @@ pub const NO_DEDUPE: &str = "sb:nodedupe";
 pub enum ValkeyError {
     #[error("error de Valkey: {0}")]
     Client(#[from] fred::error::Error),
-    #[error("no se pudo leer la CA de Valkey en {path}: {reason}")]
-    Ca { path: String, reason: String },
+    #[error(transparent)]
+    Connect(#[from] valkey_client::ConnectError),
     #[error("respuesta inesperada de Valkey: {0}")]
     Unexpected(String),
 }
@@ -125,43 +116,25 @@ pub struct Valkey {
 
 impl Valkey {
     pub async fn connect(cfg: &ValkeyConfig) -> Result<Self, ValkeyError> {
-        let mut config = Config::from_url(&cfg.url)?;
-        config.username = cfg.username.clone();
-        config.password = cfg.password.clone();
-        if config.tls.is_some()
-            || cfg.url.starts_with("valkeys://")
-            || cfg.url.starts_with("rediss://")
-        {
-            config.tls = Some(tls_connector(cfg.ca_file.as_deref())?.into());
-        }
-
-        let mut builder = Builder::from_config(config);
-        builder
-            .with_connection_config(|c| {
-                c.connection_timeout = Duration::from_secs(5);
-                c.internal_command_timeout = Duration::from_secs(5);
-                c.max_command_attempts = 3;
-            })
-            .with_performance_config(|p| {
-                // Ninguna operación del BFF debe colgar el flujo del ciudadano.
-                p.default_command_timeout = Duration::from_secs(3);
-            })
-            // Reintentos infinitos con backoff exponencial (100 ms → 5 s).
-            .set_policy(ReconnectPolicy::new_exponential(0, 100, 5_000, 2));
-
-        let client = builder.build()?;
+        let builder = valkey_client::builder(cfg)?;
+        // La conexión inicial reintenta (Valkey puede estar reiniciando).
+        let client = valkey_client::connect_with_retry(cfg).await?;
         let subscriber = builder.build_subscriber_client()?;
-        client.init().await?;
-        subscriber.init().await?;
+        let mut backoff = service_kit::backoff::Backoff::new(
+            std::time::Duration::from_millis(200),
+            std::time::Duration::from_secs(5),
+        );
+        while let Err(error) = subscriber.init().await {
+            tracing::warn!(%error, "suscriptor de Valkey no disponible; reintentando");
+            tokio::time::sleep(backoff.next_delay()).await;
+        }
         // Re-suscribe automáticamente tras una reconexión.
         let _resubscribe = subscriber.manage_subscriptions();
         subscriber.subscribe(BUS_CHANNEL).await?;
-
-        let scripts = Arc::new(Scripts::new());
         Ok(Self {
             client,
             subscriber,
-            scripts,
+            scripts: Arc::new(Scripts::new()),
         })
     }
 
@@ -178,41 +151,5 @@ impl Valkey {
         args: Vec<Value>,
     ) -> Result<R, ValkeyError> {
         Ok(script.evalsha_with_reload(&self.client, keys, args).await?)
-    }
-}
-
-fn tls_connector(ca_file: Option<&Path>) -> Result<TlsConnector, ValkeyError> {
-    let mut roots = RootCertStore::empty();
-    match ca_file {
-        Some(path) => {
-            let ca_error = |reason: String| ValkeyError::Ca {
-                path: path.display().to_string(),
-                reason,
-            };
-            for cert in CertificateDer::pem_file_iter(path).map_err(|e| ca_error(e.to_string()))? {
-                let cert = cert.map_err(|e| ca_error(e.to_string()))?;
-                roots.add(cert).map_err(|e| ca_error(e.to_string()))?;
-            }
-        }
-        None => {
-            let native = fred::rustls_native_certs::load_native_certs();
-            for cert in native.certs {
-                let _ = roots.add(cert);
-            }
-        }
-    }
-    let config = ClientConfig::builder()
-        .with_root_certificates(roots)
-        .with_no_client_auth();
-    Ok(TlsConnector::from(config))
-}
-
-/// Convierte un `Value` de Valkey a texto (para respuestas de scripts).
-pub fn value_to_string(value: &Value) -> Option<String> {
-    match value {
-        Value::String(s) => Some(s.to_string()),
-        Value::Bytes(b) => String::from_utf8(b.to_vec()).ok(),
-        Value::Integer(i) => Some(i.to_string()),
-        _ => None,
     }
 }

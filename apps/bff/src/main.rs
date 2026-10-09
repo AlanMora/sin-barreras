@@ -1,14 +1,13 @@
 use std::{net::SocketAddr, sync::Arc};
 
 use bff::{
-    AppState, c5::mock_http::MockHttpGateway, config::Config, qr::QrVerifier,
-    recorder::LogRecorder, valkey::Valkey,
+    AppState, c5::mock_http::MockHttpGateway, config::Config, qr::QrVerifier, valkey::Valkey,
 };
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    service_kit::health::run_cli_probe_if_requested("BFF_LISTEN_ADDR", 8080);
     let config = Config::from_env()?;
-    service_kit::health::run_cli_probe_if_requested(config.listen_addr.port());
 
     let args: Vec<String> = std::env::args().collect();
     if args.get(1).map(String::as_str) == Some("sign-qr") {
@@ -25,11 +24,9 @@ async fn main() -> anyhow::Result<()> {
 
     let valkey = Valkey::connect(&config.valkey).await?;
     let gateway = Arc::new(MockHttpGateway::new(&config.c5)?);
-    // La Fase 2 reemplaza LogRecorder por el registro en Valkey Streams.
-    let recorder = Arc::new(LogRecorder);
     let listen_addr = config.listen_addr;
     let replica = config.replica_id.clone();
-    let state = AppState::new(config, valkey, gateway, recorder);
+    let state = AppState::new(config, valkey, gateway);
     let _background = bff::spawn_background(&state);
 
     let listener = tokio::net::TcpListener::bind(listen_addr).await?;

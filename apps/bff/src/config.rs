@@ -1,8 +1,11 @@
 //! Configuración del BFF, leída de variables de entorno y Docker secrets.
 
-use std::{collections::HashMap, net::SocketAddr, path::PathBuf, time::Duration};
+use std::{collections::HashMap, net::SocketAddr, time::Duration};
 
+use crypto::{OperationalKey, RecipientPublicKey};
 use service_kit::config::{ConfigError, env_or, secret};
+
+use crate::records::RecordKeys;
 
 #[derive(Debug, Clone)]
 pub struct Config {
@@ -21,17 +24,13 @@ pub struct Config {
     /// Vigencia del lease de reenvío al C5 (`FORWARD_LEASE_TTL_MS`). Si una
     /// réplica muere, otra retoma sus pendientes tras este tiempo.
     pub forward_lease_ttl: Duration,
+    /// Llaves del registro: `RECORD_PUBLIC_KEY(_FILE)` (`id:base64`, pública de
+    /// investigación) y `RECORD_OPERATIONAL_KEYS(_FILE)` (`id:base64,…`, la
+    /// primera es la activa).
+    pub record_keys: RecordKeys,
 }
 
-#[derive(Debug, Clone)]
-pub struct ValkeyConfig {
-    /// `VALKEY_URL`: `valkeys://valkey:6379` (TLS) o `valkey://…` (solo pruebas).
-    pub url: String,
-    pub username: Option<String>,
-    pub password: Option<String>,
-    /// `VALKEY_CA_FILE`: CA con la que se verifica el certificado del servidor.
-    pub ca_file: Option<PathBuf>,
-}
+pub use valkey_client::ValkeyConfig;
 
 #[derive(Debug, Clone)]
 pub struct C5Config {
@@ -59,12 +58,7 @@ impl Config {
         Ok(Self {
             listen_addr: env_or("BFF_LISTEN_ADDR", SocketAddr::from(([0, 0, 0, 0], 8080)))?,
             replica_id,
-            valkey: ValkeyConfig {
-                url: env_or("VALKEY_URL", "valkeys://valkey:6379".to_owned())?,
-                username: std::env::var("VALKEY_USERNAME").ok(),
-                password: secret("VALKEY_PASSWORD").ok(),
-                ca_file: std::env::var("VALKEY_CA_FILE").ok().map(PathBuf::from),
-            },
+            valkey: ValkeyConfig::from_env()?,
             c5: C5Config {
                 mock_url: env_or("C5_MOCK_URL", "http://c5-mock:8090".to_owned())?,
                 mock_api_key: secret("C5_MOCK_API_KEY").unwrap_or_default(),
@@ -85,8 +79,31 @@ impl Config {
                 .map(str::to_owned)
                 .collect(),
             forward_lease_ttl: Duration::from_millis(env_or("FORWARD_LEASE_TTL_MS", 15_000)?),
+            record_keys: record_keys_from_env()?,
         })
     }
+}
+
+fn record_keys_from_env() -> Result<RecordKeys, ConfigError> {
+    let invalid = |key: &str, e: crypto::CryptoError| ConfigError::Invalid {
+        key: key.into(),
+        reason: e.to_string(),
+    };
+    let recipient = RecipientPublicKey::parse(&secret("RECORD_PUBLIC_KEY")?)
+        .map_err(|e| invalid("RECORD_PUBLIC_KEY", e))?;
+    let operational = secret("RECORD_OPERATIONAL_KEYS")?
+        .split(',')
+        .filter(|s| !s.trim().is_empty())
+        .map(OperationalKey::parse)
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| invalid("RECORD_OPERATIONAL_KEYS", e))?;
+    if operational.is_empty() {
+        return Err(ConfigError::Missing("RECORD_OPERATIONAL_KEYS".into()));
+    }
+    Ok(RecordKeys {
+        recipient,
+        operational,
+    })
 }
 
 /// `1:<base64>,2:<base64>` → {"1": bytes, "2": bytes}

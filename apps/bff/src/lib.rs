@@ -6,14 +6,13 @@
 //! - Puerto `C5Gateway` con adaptadores intercambiables.
 //! - Todo lo que pasa se registra mediante `Recorder` (registro completo).
 
-pub mod backoff;
 pub mod c5;
 pub mod config;
 pub mod forwarder;
 pub mod hub;
 pub mod inbound;
 pub mod qr;
-pub mod recorder;
+pub mod records;
 pub mod store;
 pub mod token;
 pub mod valkey;
@@ -31,7 +30,7 @@ use crate::{
     forwarder::Forwarders,
     hub::Hub,
     qr::QrVerifier,
-    recorder::Recorder,
+    records::Records,
     store::Store,
     valkey::{BUS_CHANNEL, Valkey},
 };
@@ -41,25 +40,23 @@ pub struct AppState {
     pub store: Store,
     pub hub: Arc<Hub>,
     pub gateway: Arc<dyn C5Gateway>,
-    pub recorder: Arc<dyn Recorder>,
+    pub records: Arc<Records>,
     pub qr: QrVerifier,
     pub forwarders: Forwarders,
 }
 
 impl AppState {
-    pub fn new(
-        config: Config,
-        valkey: Valkey,
-        gateway: Arc<dyn C5Gateway>,
-        recorder: Arc<dyn Recorder>,
-    ) -> Arc<Self> {
+    /// Debe llamarse dentro de un runtime de tokio (arranca la tarea del registro).
+    pub fn new(config: Config, valkey: Valkey, gateway: Arc<dyn C5Gateway>) -> Arc<Self> {
         let qr = QrVerifier::new(config.qr_keys.clone());
+        let producer = format!("bff/{}", config.replica_id);
+        let records = Records::start(config.record_keys.clone(), valkey.client.clone(), producer);
         Arc::new(Self {
             config: Arc::new(config),
             store: Store::new(valkey),
             hub: Arc::new(Hub::default()),
             gateway,
-            recorder,
+            records,
             qr,
             forwarders: Forwarders::default(),
         })
