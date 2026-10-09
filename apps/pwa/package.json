@@ -24,7 +24,7 @@
     "@playwright/test": "1.64.0",
     "@preact/preset-vite": "2.10.6",
     "@tailwindcss/vite": "4.3.3",
-    "@types/node": "^24.19.1",
+    "@types/node": "^26.6.4",
     "fake-indexeddb": "6.2.5",
     "tailwindcss": "4.3.3",
     "typescript": "7.0.2",
