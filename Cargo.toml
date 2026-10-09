@@ -19,6 +19,7 @@ tokio = { version = "1.53.2", features = ["macros", "rt-multi-thread", "signal",
 tower = "0.5.3"
 tower-http = { version = "0.7.1", features = ["trace", "timeout", "set-header"] }
 tracing = "0.1.44"
+tracing-opentelemetry = "0.34.0"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json"] }
 
 aes-gcm = "0.11.1"
@@ -26,6 +27,10 @@ base64 = "0.23.1"
 fred = { version = "10.1.0", default-features = false, features = ["i-std", "i-scripts", "subscriber-client", "enable-rustls", "sha-1"] }
 futures = "0.3.34"
 hmac = "0.13.0"
+opentelemetry = { version = "0.33.0", default-features = false, features = ["trace"] }
+opentelemetry_sdk = { version = "0.33.0", default-features = false, features = ["trace"] }
+opentelemetry-otlp = { version = "0.33.0", default-features = false, features = ["trace", "http-proto", "reqwest-blocking-client"] }
+prometheus-client = "0.25.1"
 hpke = { version = "0.14.1", default-features = false, features = ["alloc", "x25519", "aes", "hkdfsha2", "getrandom"] }
 getrandom = "0.4.3"
 reqwest = { version = "0.13.5", default-features = false, features = ["json", "rustls"] }

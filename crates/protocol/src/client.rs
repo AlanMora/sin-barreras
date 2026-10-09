@@ -44,6 +44,19 @@ impl ClientMessage {
         }
     }
 
+    /// Contexto de traza W3C del mensaje, si lo trae.
+    pub fn traceparent(&self) -> Option<&str> {
+        match self {
+            Self::Hello(m) => m.traceparent.as_deref(),
+            Self::CreateIncident(m) => m.traceparent.as_deref(),
+            Self::ChatMessage(m) => m.traceparent.as_deref(),
+            Self::LocationUpdate(m) => m.traceparent.as_deref(),
+            Self::VideoCallRequest(m) => m.traceparent.as_deref(),
+            Self::ClientEvent(m) => m.traceparent.as_deref(),
+            Self::Ack(_) | Self::Ping(_) | Self::Close(_) => None,
+        }
+    }
+
     /// Nombre estable del tipo de mensaje (para métricas y logs).
     pub fn kind(&self) -> &'static str {
         match self {
