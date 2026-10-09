@@ -27,5 +27,6 @@ escribe uno nuevo que lo reemplaza y se marca el anterior como "Reemplazado".
 | [0019](0019-i18n-propia.md) | i18n propia, tipada y sin dependencias | Aceptado |
 | [0020](0020-rate-limiting.md) | Rate limiting que degrada y nunca bloquea el pedido de ayuda | Aceptado |
 | [0021](0021-investigacion-y-bitacora.md) | Investigación con bitácora de accesos obligatoria en la BD | Aceptado |
+| [0022](0022-respaldos-pgbackrest.md) | Respaldos con pgBackRest, réplica y prueba de restauración | Aceptado |
 
 Plantilla: copia [`0000-plantilla.md`](0000-plantilla.md).

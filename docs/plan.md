@@ -10,4 +10,4 @@
 | 5. Silencioso, estados, video | Modo silencioso + salida rápida, estados del incidente, `VideoCallProvider` | ✅ Hecha |
 | 6. Auditoría a11y + ajustes | WCAG 2.1 AA, ajustes, axe en E2E, checklist de lectores de pantalla | ✅ Hecha (falta la prueba manual con lectores) |
 | 7. Seguridad | Rotación de llaves de QR, rate limit, CSP, CLI de investigación + bitácora, pgAudit | ✅ Hecha |
-| 8. Swarm + observabilidad | Stack de Swarm, réplica, pgBackRest, OTel/Prometheus/Tempo/Grafana/Alertmanager, E2E | Siguiente |
+| 8. Swarm + observabilidad | Stack de Swarm, réplica, pgBackRest, OTel/Prometheus/Tempo/Grafana/Alertmanager, E2E | ✅ Hecha (falta probar en el clúster real) |
