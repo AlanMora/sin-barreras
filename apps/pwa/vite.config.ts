@@ -14,7 +14,10 @@ export default defineConfig({
   },
   server: {
     // En desarrollo, el WebSocket va por Traefik (docker compose --profile apps).
-    proxy: { '/ws': { target: 'ws://localhost:8000', ws: true } },
+    proxy: {
+      '/ws': { target: 'ws://localhost:8000', ws: true },
+      '/api': { target: 'http://localhost:8000' },
+    },
   },
   plugins: [
     preact(),
