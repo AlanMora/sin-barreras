@@ -153,6 +153,8 @@ pub enum EventKind {
     FieldsDropped,
     C5CallFailed,
     C5OrphanEvent,
+    /// Exceso de mensajes o de sesiones nuevas (sin datos sensibles).
+    RateLimited,
 }
 
 impl EventKind {
@@ -187,6 +189,7 @@ impl EventKind {
             Self::FieldsDropped => "fields_dropped",
             Self::C5CallFailed => "c5_call_failed",
             Self::C5OrphanEvent => "c5_orphan_event",
+            Self::RateLimited => "rate_limited",
         }
     }
 }

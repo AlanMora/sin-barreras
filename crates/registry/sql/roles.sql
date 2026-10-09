@@ -33,3 +33,7 @@ ALTER ROLE sb_writer SET statement_timeout = '30s';
 ALTER ROLE sb_reporting SET statement_timeout = '60s';
 ALTER ROLE sb_reporting SET default_transaction_read_only = on;
 ALTER ROLE sb_auditor SET default_transaction_read_only = on;
+-- Defensa en profundidad: toda sentencia del rol de investigación queda en el
+-- log del servidor, además de la bitácora en la base.
+ALTER ROLE sb_investigator SET log_statement = 'all';
+ALTER ROLE sb_investigator SET statement_timeout = '120s';

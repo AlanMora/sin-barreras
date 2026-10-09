@@ -87,37 +87,72 @@ async fn verify_chains(
     .bind(only_chain)
     .fetch(pool);
 
-    let mut current_chain: Option<String> = None;
-    let mut expected_seq = 1_i64;
-    let mut previous_hash = GENESIS_HASH.to_vec();
+    let mut checker = ChainChecker::default();
     while let Some(row) = rows.try_next().await? {
-        report.records += 1;
+        checker.check(&row)?;
+    }
+    report.records += checker.records;
+    report.chains += checker.chains;
+    report.issues.extend(checker.issues);
+    Ok(())
+}
+
+/// Verifica filas de `registry.records` en orden `(chain_id, chain_seq)`.
+/// Se usa al verificar toda la base y al investigar una sesión (con las filas
+/// que devolvió la función de investigación).
+#[derive(Debug)]
+pub struct ChainChecker {
+    current_chain: Option<String>,
+    expected_seq: i64,
+    previous_hash: Vec<u8>,
+    pub records: u64,
+    pub chains: u64,
+    pub issues: Vec<Issue>,
+}
+
+impl Default for ChainChecker {
+    fn default() -> Self {
+        Self {
+            current_chain: None,
+            expected_seq: 1,
+            previous_hash: GENESIS_HASH.to_vec(),
+            records: 0,
+            chains: 0,
+            issues: Vec::new(),
+        }
+    }
+}
+
+impl ChainChecker {
+    pub fn check(&mut self, row: &PgRow) -> Result<(), sqlx::Error> {
+        self.records += 1;
         let chain: String = row.try_get("chain_id")?;
-        if current_chain.as_deref() != Some(chain.as_str()) {
-            current_chain = Some(chain.clone());
-            report.chains += 1;
-            expected_seq = 1;
-            previous_hash = GENESIS_HASH.to_vec();
+        if self.current_chain.as_deref() != Some(chain.as_str()) {
+            self.current_chain = Some(chain.clone());
+            self.chains += 1;
+            self.expected_seq = 1;
+            self.previous_hash = GENESIS_HASH.to_vec();
         }
         let chain_seq: i64 = row.try_get("chain_seq")?;
         let prev_hash: Vec<u8> = row.try_get("prev_hash")?;
         let stored_hash: Vec<u8> = row.try_get("hash")?;
-
-        if chain_seq != expected_seq {
-            report.issues.push(record_issue(
-                &row,
+        if chain_seq != self.expected_seq {
+            let expected = self.expected_seq;
+            self.issues.push(record_issue(
+                row,
                 &chain,
-                format!("secuencia rota: se esperaba {expected_seq} y hay {chain_seq} (registros faltantes)"),
+                format!(
+                    "secuencia rota: se esperaba {expected} y hay {chain_seq} (registros faltantes)"
+                ),
             ));
         }
-        if prev_hash != previous_hash {
-            report.issues.push(record_issue(
-                &row,
+        if prev_hash != self.previous_hash {
+            self.issues.push(record_issue(
+                row,
                 &chain,
                 "prev_hash no coincide con el registro anterior",
             ));
         }
-
         let event_id: Uuid = row.try_get("event_id")?;
         let attributes_json: String = row.try_get("attributes_json")?;
         let sealed_nonce: Option<Vec<u8>> = row.try_get("sealed_nonce")?;
@@ -154,16 +189,16 @@ async fn verify_chains(
             prev_hash: &prev_hash,
         });
         if computed.as_slice() != stored_hash.as_slice() {
-            report.issues.push(record_issue(
-                &row,
+            self.issues.push(record_issue(
+                row,
                 &chain,
                 "el contenido no coincide con su hash (registro alterado)",
             ));
         }
-        expected_seq = chain_seq + 1;
-        previous_hash = stored_hash;
+        self.expected_seq = chain_seq + 1;
+        self.previous_hash = stored_hash;
+        Ok(())
     }
-    Ok(())
 }
 
 async fn verify_checkpoints(pool: &PgPool, report: &mut Report) -> Result<(), sqlx::Error> {

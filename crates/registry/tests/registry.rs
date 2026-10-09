@@ -392,3 +392,64 @@ async fn session_keys_are_stored_from_their_event() {
 fn crypto_alg() -> &'static str {
     "HPKE-Base-X25519-SHA256-A256GCM"
 }
+
+#[tokio::test]
+async fn investigation_requires_the_access_log() {
+    let db = setup().await;
+    let writer = Writer::new(db.pool("sb_writer"));
+    let session = Uuid::now_v7();
+    writer
+        .write_batch(&[sealed_entry(session, "1-0"), sealed_entry(session, "2-0")])
+        .await
+        .unwrap();
+    let investigator = db.pool("sb_investigator");
+
+    // Sin acceso directo a las tablas.
+    let err = sqlx::query("SELECT * FROM registry.records")
+        .execute(&investigator)
+        .await
+        .unwrap_err();
+    assert_eq!(err.as_database_error().unwrap().code().unwrap(), "42501");
+
+    // Solo a través de la función, que deja rastro.
+    let rows: Vec<(i64,)> = sqlx::query_as(
+        "SELECT chain_seq FROM investigation.read_session($1, 'Lic. Pérez (Jurídico)', 'Queja 2026/0153')",
+    )
+    .bind(session)
+    .fetch_all(&investigator)
+    .await
+    .unwrap();
+    assert_eq!(rows.len(), 2);
+    let log: Vec<(String, String, String, Option<i32>)> = sqlx::query_as(
+        "SELECT requested_by, reason, action, rows_returned FROM registry.access_log ORDER BY access_id",
+    )
+    .fetch_all(&db.superuser)
+    .await
+    .unwrap();
+    assert_eq!(log[0].2, "read_session");
+    assert_eq!(
+        log[1],
+        (
+            "Lic. Pérez (Jurídico)".into(),
+            "Queja 2026/0153".into(),
+            "read_session_rows".into(),
+            Some(2)
+        )
+    );
+
+    // Sin motivo no hay datos.
+    let err = sqlx::query("SELECT * FROM investigation.read_session($1, 'Lic. Pérez', '')")
+        .bind(session)
+        .execute(&investigator)
+        .await
+        .unwrap_err();
+    assert_eq!(err.as_database_error().unwrap().code().unwrap(), "23514");
+
+    // La bitácora tampoco se puede borrar.
+    let su = &db.superuser;
+    let err = sqlx::query("DELETE FROM registry.access_log")
+        .execute(su)
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("solo inserción"));
+}
