@@ -618,3 +618,37 @@ async fn incident_status_and_video_call_updates_reach_the_citizen() {
     };
     assert_eq!(status.eta_seconds, Some(480));
 }
+
+/// Regresión: si el primer mensaje es un chat, el incidente se crea con una
+/// llave de idempotencia PROPIA, distinta de la del chat. Con la misma llave,
+/// el C5 devolvía la respuesta del incidente al enviar el mensaje y la cola de
+/// la sesión quedaba bloqueada.
+#[tokio::test]
+async fn chat_as_first_message_uses_distinct_idempotency_keys() {
+    let (_valkey, url) = start_valkey().await;
+    let gateway = Arc::new(InMemoryGateway::default());
+    let bff = TestBff::start(&url, "bff-a", Arc::clone(&gateway)).await;
+    let mut client = Client::connect(bff.addr).await;
+    client.hello(json!({})).await;
+    let (chat_id, _) = client.command(chat("primer mensaje")).await;
+    let status = client
+        .recv_event(|e| matches!(e, ServerEvent::MessageStatus(_)))
+        .await;
+    let ServerEvent::MessageStatus(status) = status.event else {
+        unreachable!()
+    };
+    assert_eq!(
+        (status.client_msg_id, status.status),
+        (chat_id, DeliveryStatus::Delivered)
+    );
+    let calls = gateway.calls();
+    let create_key = calls.iter().find_map(|c| match c {
+        Call::CreateIncident(r) => Some(r.idempotency_key),
+        _ => None,
+    });
+    assert_eq!(
+        create_key,
+        Some(bff::forwarder::incident_idempotency_key(chat_id))
+    );
+    assert_ne!(create_key, Some(chat_id));
+}

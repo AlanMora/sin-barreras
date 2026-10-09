@@ -31,7 +31,7 @@ pub enum Call {
 pub struct InMemoryGateway {
     calls: Mutex<Vec<Call>>,
     /// Respuestas idempotentes ya dadas: idempotency_key → id del C5.
-    idempotent: Mutex<HashMap<Uuid, String>>,
+    idempotent: Mutex<HashMap<(String, Uuid), String>>,
     fail_next_transient: AtomicU32,
     reject_next: AtomicU32,
     counter: AtomicU64,
@@ -91,8 +91,9 @@ impl InMemoryGateway {
             .idempotent
             .lock()
             .map_err(|_| C5Error::Transient("lock".into()))?;
+        // Igual que un C5 real: la idempotencia es por operación.
         let id = idempotent
-            .entry(key)
+            .entry((prefix.to_owned(), key))
             .or_insert_with(|| {
                 format!(
                     "{prefix}-{:06}",

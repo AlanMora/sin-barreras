@@ -43,6 +43,15 @@ pub const SWEEP_AFTER: Duration = Duration::from_secs(3);
 /// Espacio de nombres para derivar ids estables (UUIDv5) a partir de ids del cliente o del C5.
 pub const ID_NAMESPACE: Uuid = Uuid::from_u128(0x5b1c_0b5e_7a2d_4c3e_9f10_c5c5_0000_0001);
 
+/// Llave de idempotencia de la creación del incidente, derivada (y por eso
+/// estable entre reintentos y réplicas) del mensaje que la provocó.
+pub fn incident_idempotency_key(cause: Uuid) -> Uuid {
+    Uuid::new_v5(
+        &ID_NAMESPACE,
+        &[b"create_incident:".as_slice(), cause.as_bytes()].concat(),
+    )
+}
+
 /// Forwarders activos en esta réplica. `true` = hay que volver a revisar al terminar.
 #[derive(Default)]
 pub struct Forwarders {
@@ -377,7 +386,10 @@ async fn ensure_incident(
     let incident_id = Uuid::new_v5(&ID_NAMESPACE, cause.as_bytes());
     let entry_status = ctx.get("entry_status").unwrap_or("none").to_owned();
     let request = NewIncident {
-        idempotency_key: cause,
+        // Llave PROPIA de la operación: si el incidente lo provocó un chat, el
+        // chat se envía después con su propio `client_msg_id`; reutilizarlo
+        // haría que el C5 confundiera ambas operaciones.
+        idempotency_key: incident_idempotency_key(cause),
         incident_id,
         channel,
         language: language

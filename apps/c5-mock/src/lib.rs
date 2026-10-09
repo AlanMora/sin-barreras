@@ -117,6 +117,7 @@ async fn create_incident(
     Json(body): Json<NewIncident>,
 ) -> Response {
     let (response, fresh) = state.idempotent(
+        "incident",
         body.idempotency_key,
         |ids| json!({ "incident_id": ids.incident() }),
     );
@@ -162,6 +163,7 @@ async fn post_message(
         return not_found();
     };
     let (response, fresh) = state.idempotent(
+        "message",
         body.idempotency_key,
         |ids| json!({ "message_id": ids.message() }),
     );
@@ -216,6 +218,7 @@ async fn post_video_call(
         return not_found();
     }
     let (response, fresh) = state.idempotent(
+        "video_call",
         body.idempotency_key,
         |_| json!({ "video_call_id": format!("VID-{}", Uuid::new_v4().simple()) }),
     );

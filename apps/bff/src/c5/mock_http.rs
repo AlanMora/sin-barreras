@@ -60,7 +60,9 @@ impl MockHttpGateway {
             return response
                 .json::<R>()
                 .await
-                .map_err(|e| C5Error::Transient(format!("respuesta: {e}")));
+                // 2xx con un cuerpo inesperado NO es una falla temporal:
+                // reintentarlo bloquearía para siempre la cola de la sesión.
+                .map_err(|e| C5Error::Rejected(format!("respuesta inesperada del C5: {e}")));
         }
         Err(classify(status))
     }

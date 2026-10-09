@@ -43,7 +43,7 @@ pub struct MockState {
 struct Inner {
     incidents: HashMap<String, Incident>,
     /// idempotency_key → respuesta ya dada.
-    idempotent: HashMap<Uuid, Value>,
+    idempotent: HashMap<(&'static str, Uuid), Value>,
     events: VecDeque<(u64, String)>,
     next_event: u64,
     next_incident: u64,
@@ -72,13 +72,14 @@ impl MockState {
     /// `create` y la guarda.
     pub fn idempotent(
         &self,
+        operation: &'static str,
         key: Uuid,
         create: impl FnOnce(&mut IdGen<'_>) -> Value,
     ) -> (Value, bool) {
         let Ok(mut inner) = self.inner.lock() else {
             return (json!({}), false);
         };
-        if let Some(previous) = inner.idempotent.get(&key) {
+        if let Some(previous) = inner.idempotent.get(&(operation, key)) {
             return (previous.clone(), false);
         }
         let response = {
@@ -93,7 +94,7 @@ impl MockState {
                 next_message,
             })
         };
-        inner.idempotent.insert(key, response.clone());
+        inner.idempotent.insert((operation, key), response.clone());
         (response, true)
     }
 
