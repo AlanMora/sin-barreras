@@ -1,0 +1,26 @@
+[package]
+name = "sb-admin"
+version = "0.1.0"
+description = "Herramienta de administración del registro: llaves, migraciones, verificación de integridad, cola de errores e investigación."
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+base64.workspace = true
+crypto.workspace = true
+events.workspace = true
+fred.workspace = true
+getrandom.workspace = true
+registry.workspace = true
+serde_json.workspace = true
+service-kit.workspace = true
+sqlx.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+valkey-client.workspace = true
+
+[lints]
+workspace = true
