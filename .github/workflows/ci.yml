@@ -82,6 +82,10 @@ jobs:
           sleep 3
           docker compose run --rm -T admin verify
           docker compose run --rm -T admin dlq list
+      - name: Prueba de restauración de respaldos (pgBackRest cifrado → restaurar → verificar)
+        run: |
+          docker compose --profile tools build admin
+          infra/backup/restore-test.sh
       - name: Logs si algo falló
         if: failure()
         run: docker compose --profile apps logs --no-color

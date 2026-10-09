@@ -50,10 +50,13 @@ services:
       retries: 10
 
   postgres:
-    image: postgres:18-alpine
+    build:
+      context: .
+      dockerfile: infra/docker/postgres.Dockerfile
+    image: sin-barreras/postgres:dev
     <<: [*hardening, *datastore-caps]
-    entrypoint: ["/bin/sh", "/usr/local/bin/sb-start.sh"]
     environment:
+      SB_PG_ROLE: primary
       POSTGRES_DB: sin_barreras
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD_FILE: /run/secrets/postgres_superuser_password
@@ -62,12 +65,7 @@ services:
       POSTGRES_INITDB_ARGS: "--data-checksums --encoding=UTF8 --locale-provider=builtin --builtin-locale=C.UTF-8"
     volumes:
       - postgres-data:/var/lib/postgresql
-      - ./infra/postgres/postgresql.conf:/etc/postgresql/postgresql.conf:ro
-      - ./infra/postgres/pg_hba.conf:/etc/postgresql/pg_hba.conf:ro
-      - ./infra/postgres/pg_ident.conf:/etc/postgresql/pg_ident.conf:ro
-      - ./infra/postgres/start.sh:/usr/local/bin/sb-start.sh:ro
-      - ./infra/postgres/initdb/10-roles.sh:/docker-entrypoint-initdb.d/10-roles.sh:ro
-      - ./crates/registry/sql/roles.sql:/docker-entrypoint-initdb.d/roles.sql.inc:ro
+      - pgbackrest-repo:/var/lib/pgbackrest
       - ./infra/dev/certs/ca.crt:/run/tls-src/ca.crt:ro
       - ./infra/dev/certs/postgres.crt:/run/tls-src/postgres.crt:ro
       - ./infra/dev/certs/postgres.key:/run/tls-src/postgres.key:ro
@@ -79,13 +77,41 @@ services:
       - postgres_reporting_password
       - postgres_investigator_password
       - postgres_replicator_password
+      - pgbackrest_cipher_pass
     shm_size: 256mb
     ports: ["127.0.0.1:${SB_POSTGRES_PORT:-15432}:5432"]
     healthcheck:
-      test: ["CMD", "pg_isready", "-U", "postgres", "-d", "sin_barreras"]
+      test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "postgres", "-d", "sin_barreras"]
       interval: 5s
       timeout: 3s
-      retries: 10
+      retries: 20
+
+  # Réplica de streaming: lecturas de reportes e investigación de integridad.
+  postgres-replica:
+    build:
+      context: .
+      dockerfile: infra/docker/postgres.Dockerfile
+    image: sin-barreras/postgres:dev
+    <<: [*hardening, *datastore-caps]
+    environment:
+      SB_PG_ROLE: replica
+      SB_PG_PRIMARY_HOST: postgres
+      SB_PG_REPLICA_NAME: replica1
+    volumes:
+      - postgres-replica-data:/var/lib/postgresql
+      - ./infra/dev/certs/ca.crt:/run/tls-src/ca.crt:ro
+      - ./infra/dev/certs/postgres.crt:/run/tls-src/postgres.crt:ro
+      - ./infra/dev/certs/postgres.key:/run/tls-src/postgres.key:ro
+    secrets: [postgres_replicator_password]
+    shm_size: 256mb
+    ports: ["127.0.0.1:${SB_POSTGRES_REPLICA_PORT:-15433}:5432"]
+    depends_on:
+      postgres: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "postgres"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
 
   # Borde: mismo ruteo que en producción. `/` → PWA, `/ws` → BFF (2 réplicas).
   traefik:
@@ -363,6 +389,8 @@ secrets:
     file: ./infra/dev/secrets/record_operational_keys
   record_private_key:
     file: ./infra/dev/secrets/record_private_key
+  pgbackrest_cipher_pass:
+    file: ./infra/dev/secrets/pgbackrest_cipher_pass
   postgres_migrator_password:
     file: ./infra/dev/secrets/postgres_migrator_password
   postgres_record_writer_password:
@@ -385,6 +413,8 @@ secrets:
 volumes:
   valkey-data:
   postgres-data:
+  postgres-replica-data:
+  pgbackrest-repo:
   tempo-data:
   prometheus-data:
   grafana-data:
