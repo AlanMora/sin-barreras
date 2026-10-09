@@ -1,0 +1,20 @@
+# Tempo: almacén de trazas (local). Retención corta: las trazas son para
+# diagnóstico; el registro legal vive en Postgres.
+server:
+  http_listen_port: 3200
+distributor:
+  receivers:
+    otlp:
+      protocols:
+        grpc:
+          endpoint: 0.0.0.0:4317
+compactor:
+  compaction:
+    block_retention: 168h
+storage:
+  trace:
+    backend: local
+    local:
+      path: /var/tempo/traces
+    wal:
+      path: /var/tempo/wal

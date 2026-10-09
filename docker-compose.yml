@@ -107,6 +107,9 @@ services:
       - --accesslog.fields.names.ClientPort=drop
       - --accesslog.fields.names.ClientUsername=drop
       - --accesslog.fields.headers.defaultmode=drop
+      - --metrics.prometheus=true
+      - --entrypoints.metrics.address=:8082
+      - --metrics.prometheus.entrypoint=metrics
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
     ports: ["127.0.0.1:${SB_PORT:-8000}:8000"]
@@ -131,6 +134,7 @@ services:
     environment:
       BFF_LISTEN_ADDR: 0.0.0.0:8080
       LOG_FORMAT: pretty
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
       VALKEY_URL: valkeys://valkey:6379
       VALKEY_USERNAME: bff
       VALKEY_PASSWORD_FILE: /run/secrets/valkey_bff_password
@@ -166,6 +170,7 @@ services:
     environment:
       RECORD_WRITER_LISTEN_ADDR: 0.0.0.0:8081
       LOG_FORMAT: pretty
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
       VALKEY_URL: valkeys://valkey:6379
       VALKEY_USERNAME: record_writer
       VALKEY_PASSWORD_FILE: /run/secrets/valkey_record_writer_password
@@ -212,6 +217,7 @@ services:
     image: sin-barreras/c5-mock:dev
     environment:
       C5_MOCK_LISTEN_ADDR: 0.0.0.0:8090
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
       C5_MOCK_API_KEY_FILE: /run/secrets/c5_mock_api_key
       LOG_FORMAT: pretty
     secrets: [c5_mock_api_key]
@@ -281,7 +287,64 @@ services:
       traefik.http.routers.pwa.priority: "1"
       traefik.http.services.pwa.loadbalancer.server.port: "8080"
 
+  # --- Observabilidad (autoalojada, ADR-0008) -------------------------------
+  # El colector corre con las apps; el resto con `--profile observability`.
+  otel-collector:
+    image: otel/opentelemetry-collector:0.162.0
+    <<: *hardening
+    profiles: [apps]
+    command: ["--config=/etc/otelcol/config.yaml"]
+    volumes:
+      - ./infra/observability/otel-collector.yaml:/etc/otelcol/config.yaml:ro
+    read_only: true
+    cap_drop: [ALL]
+
+  tempo:
+    image: grafana/tempo:2.10.0
+    <<: *hardening
+    profiles: [observability]
+    command: ["-config.file=/etc/tempo.yaml"]
+    volumes:
+      - ./infra/observability/tempo.yaml:/etc/tempo.yaml:ro
+      - tempo-data:/var/tempo
+
+  prometheus:
+    image: prom/prometheus:v3.15.0
+    <<: *hardening
+    profiles: [observability]
+    command: ["--config.file=/etc/prometheus/prometheus.yml", "--storage.tsdb.retention.time=30d"]
+    volumes:
+      - ./infra/observability/prometheus.dev.yml:/etc/prometheus/prometheus.yml:ro
+      - ./infra/observability/alerts.yml:/etc/prometheus/alerts.yml:ro
+      - prometheus-data:/prometheus
+    ports: ["127.0.0.1:${SB_PROMETHEUS_PORT:-9091}:9090"]
+
+  alertmanager:
+    image: prom/alertmanager:v0.34.1
+    <<: *hardening
+    profiles: [observability]
+    volumes:
+      - ./infra/observability/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+
+  grafana:
+    image: grafana/grafana:13.2.3
+    <<: *hardening
+    profiles: [observability]
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_SECURITY_ADMIN_PASSWORD__FILE: /run/secrets/grafana_admin_password
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+    secrets: [grafana_admin_password]
+    volumes:
+      - ./infra/observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./infra/observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    ports: ["127.0.0.1:${SB_GRAFANA_PORT:-3300}:3000"]
+
 secrets:
+  grafana_admin_password:
+    file: ./infra/dev/secrets/grafana_admin_password
   dev_ca:
     file: ./infra/dev/certs/ca.crt
   valkey_bff_password:
@@ -322,3 +385,6 @@ secrets:
 volumes:
   valkey-data:
   postgres-data:
+  tempo-data:
+  prometheus-data:
+  grafana-data:

@@ -1,0 +1,7 @@
+apiVersion: 1
+providers:
+  - name: sin-barreras
+    folder: Sin Barreras
+    type: file
+    options:
+      path: /var/lib/grafana/dashboards

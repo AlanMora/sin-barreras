@@ -65,6 +65,7 @@ for role in superuser migrator record_writer auditor reporting investigator repl
 done
 new_secret c5_mock_api_key hex
 new_secret qr_keys qr_keys
+new_secret grafana_admin_password hex
 new_secret record_operational_keys sh -c "printf 'op1:%s' \"\$(openssl rand -base64 32)\""
 
 # Par de llaves de investigación (X25519). En desarrollo la privada vive

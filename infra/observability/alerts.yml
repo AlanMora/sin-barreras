@@ -1,0 +1,79 @@
+# Alertas de Sin Barreras. Severidad `critical` = riesgo para una emergencia
+# en curso o para la integridad del registro: atender de inmediato.
+groups:
+  - name: registro
+    rules:
+      - alert: RegistroConRetraso
+        expr: max(sb_record_writer_delay_seconds) > 60
+        for: 2m
+        labels: { severity: critical }
+        annotations:
+          summary: "Hay eventos sin guardar en Postgres desde hace {{ $value }} s"
+          description: "Postgres o record-writer no avanzan. Los eventos esperan en Valkey (no se pierden), pero el stream crece. Ver docs/runbooks/registro.md"
+      - alert: StreamDelRegistroCreciendo
+        expr: max(sb_record_writer_stream_backlog) > 1000 and deriv(max(sb_record_writer_stream_backlog)[10m:1m]) > 0
+        for: 5m
+        labels: { severity: critical }
+        annotations:
+          summary: "El stream del registro tiene {{ $value }} eventos y sigue creciendo"
+      - alert: EventosEnColaDeErrores
+        expr: max(sb_record_writer_dead_letters) > 0
+        for: 1m
+        labels: { severity: critical }
+        annotations:
+          summary: "{{ $value }} eventos del registro en la cola de errores"
+          description: "Revisar con `sb-admin dlq list`, corregir la causa y reinyectar con `sb-admin dlq replay`."
+      - alert: EventosTecnicosDescartados
+        expr: sum(increase(sb_bff_records_dropped_total[5m])) > 0
+        labels: { severity: critical }
+        annotations:
+          summary: "El BFF descartó eventos técnicos del registro (canal lleno: ¿Valkey caído?)"
+      - alert: SinRecordWriter
+        expr: absent(up{job="record-writer"} == 1)
+        for: 2m
+        labels: { severity: critical }
+        annotations:
+          summary: "No hay ninguna réplica de record-writer viva"
+
+  - name: atencion
+    rules:
+      - alert: MensajesSinEntregarAlC5
+        expr: max(sb_bff_forward_backlog_sessions) > 0
+        for: 3m
+        labels: { severity: critical }
+        annotations:
+          summary: "{{ $value }} sesiones con mensajes de ciudadanos aún sin entregar al C5"
+          description: "El C5 no responde o rechaza. Los mensajes están a salvo y se reintentan; verificar la integración con el C5."
+      - alert: ErroresDelC5
+        expr: sum(rate(sb_bff_c5_errors_total[5m])) > 0.2
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "El C5 está fallando ({{ $value | printf \"%.2f\" }} errores/s)"
+      - alert: EntregaLenta
+        expr: histogram_quantile(0.95, sum(rate(sb_bff_delivery_latency_seconds_bucket[10m])) by (le)) > 10
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "El 5 % de los mensajes tarda más de {{ $value | printf \"%.0f\" }} s en llegar al C5"
+      - alert: BffSinRedundancia
+        expr: count(up{job="bff"} == 1) < 2
+        for: 2m
+        labels: { severity: warning }
+        annotations:
+          summary: "Quedan menos de 2 réplicas del BFF"
+      - alert: SinBff
+        expr: absent(up{job="bff"} == 1)
+        for: 1m
+        labels: { severity: critical }
+        annotations:
+          summary: "No hay ninguna réplica del BFF viva: nadie puede pedir ayuda por la PWA"
+
+  - name: seguridad
+    rules:
+      - alert: VolumenInusualPorIp
+        expr: sum(increase(sb_bff_rate_limited_total{kind="ip_observe"}[5m])) > 0
+        labels: { severity: warning }
+        annotations:
+          summary: "Muchas sesiones nuevas desde una misma IP"
+          description: "Puede ser un ataque o una emergencia masiva (CGNAT). Ver ADR-0020 antes de activar RATE_IP_HARD_PER_MIN."
