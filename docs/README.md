@@ -10,4 +10,5 @@
 | [modelo-datos.md](modelo-datos.md) | Modelo de datos del registro, integridad y no pérdida | Vivo |
 | [llaves.md](llaves.md) | Gestión y rotación de llaves | Vivo |
 | [videollamada.md](videollamada.md) | Punto de integración con el sistema de videollamadas | Vivo |
+| [seguridad.md](seguridad.md) | Amenazas y controles de seguridad | Vivo |
 | [accesibilidad.md](accesibilidad.md) | Accesibilidad: verificaciones automáticas y checklist manual | Vivo |
