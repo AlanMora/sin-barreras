@@ -244,6 +244,26 @@ services:
       VALKEY_CA_FILE: /run/secrets/dev_ca
     secrets: [postgres_auditor_password, valkey_admin_password, dev_ca]
 
+  # Investigación auditada (solo desarrollo: en producción la llave privada
+  # NUNCA está en los servidores; se usa en un equipo fuera de línea):
+  #   docker compose run --rm investigate --session <UUID> --requested-by "Nombre" --reason "Folio"
+  investigate:
+    <<: *rust-service
+    profiles: [tools]
+    restart: "no"
+    image: sin-barreras/sb-admin:dev
+    entrypoint: ["/sb-admin", "investigate"]
+    healthcheck:
+      disable: true
+    environment:
+      PG_HOST: postgres
+      PG_DATABASE: sin_barreras
+      PG_USER: sb_investigator
+      PG_PASSWORD_FILE: /run/secrets/postgres_investigator_password
+      PG_CA_FILE: /run/secrets/dev_ca
+      RECORD_PRIVATE_KEYS_FILE: /run/secrets/record_private_key
+    secrets: [postgres_investigator_password, record_private_key, dev_ca]
+
   pwa:
     <<: *hardening
     profiles: [apps]
@@ -278,6 +298,8 @@ secrets:
     file: ./infra/dev/secrets/record_public_key
   record_operational_keys:
     file: ./infra/dev/secrets/record_operational_keys
+  record_private_key:
+    file: ./infra/dev/secrets/record_private_key
   postgres_migrator_password:
     file: ./infra/dev/secrets/postgres_migrator_password
   postgres_record_writer_password:

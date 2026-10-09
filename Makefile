@@ -1,7 +1,7 @@
 # Atajos para el trabajo diario. Cada objetivo solo encadena comandos
 # estándar (cargo, pnpm, docker compose); no esconde lógica.
 
-.PHONY: help bootstrap up up-apps down logs check test lint build fmt smoke e2e protocol verify dlq
+.PHONY: help bootstrap up up-apps down logs check test lint build fmt smoke e2e protocol verify dlq investigate
 
 help: ## Muestra esta ayuda
 	@grep -E '^[a-z-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-12s %s\n", $$1, $$2}'
@@ -47,6 +47,9 @@ e2e: ## Pruebas E2E con Playwright y axe contra el sistema levantado (make up-ap
 
 verify: ## Verifica la integridad del registro completo (rol auditor)
 	docker compose run --rm admin verify
+
+investigate: ## Investigación auditada: make investigate ARGS='--c5 ID --requested-by "Nombre" --reason "Folio"'
+	docker compose run --rm investigate $(ARGS)
 
 dlq: ## Muestra la cola de errores del registro
 	docker compose run --rm admin dlq list
