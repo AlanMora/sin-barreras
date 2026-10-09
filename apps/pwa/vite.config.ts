@@ -1,9 +1,21 @@
+import { readFileSync } from 'node:fs';
 import preact from '@preact/preset-vite';
 import tailwindcss from '@tailwindcss/vite';
 import { defineConfig } from 'vite';
 import { VitePWA } from 'vite-plugin-pwa';
 
+const pkg = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8')) as {
+  version: string;
+};
+
 export default defineConfig({
+  define: {
+    __APP_VERSION__: JSON.stringify(pkg.version),
+  },
+  server: {
+    // En desarrollo, el WebSocket va por Traefik (docker compose --profile apps).
+    proxy: { '/ws': { target: 'ws://localhost:8000', ws: true } },
+  },
   plugins: [
     preact(),
     tailwindcss(),

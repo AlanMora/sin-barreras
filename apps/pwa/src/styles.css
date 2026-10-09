@@ -1,40 +1,116 @@
 @import "tailwindcss";
 
 /*
- * Design tokens de Sin Barreras (propuesta inicial; se afinan en la Fase 3).
- * Contrastes verificados contra WCAG 2.1 AA:
- *   navy-900 sobre blanco ........ 15.39:1
- *   navy-700 sobre blanco ......... 9.99:1
- *   orange-500 con texto navy-900 . 5.64:1  ← botones de acento
- *   orange-700 sobre blanco ....... 5.43:1  ← naranja como texto
- *   orange-500 con texto blanco ... 2.73:1  ✗ NO usar
+ * Nunito (redonda, licencia OFL) autoalojada. Solo el subconjunto latino
+ * (incluye á é í ó ú ñ ü ¿ ¡): ~39 KB. `swap` muestra el texto de inmediato con
+ * la fuente del sistema; en 3G lenta nadie espera a la tipografía.
  */
+@font-face {
+  font-family: "Nunito Variable";
+  font-style: normal;
+  font-display: swap;
+  font-weight: 200 1000;
+  src: url("../node_modules/@fontsource-variable/nunito/files/nunito-latin-wght-normal.woff2")
+    format("woff2-variations");
+  unicode-range:
+    U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F,
+    U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+/*
+ * Sistema de diseño de Sin Barreras.
+ *
+ * Los componentes usan SOLO tokens semánticos (bg, fg, accent…). Las tres
+ * paletas —normal, alto contraste y modo silencioso— redefinen esos tokens.
+ * Contrastes verificados (WCAG 2.1 AA; texto ≥ 4.5:1, componentes ≥ 3:1):
+ *
+ *   normal   texto 15.4 · secundario 5.4 · botón primario 15.4 · acento 5.6 · borde 4.4
+ *   alto     texto 21.0 · acento 14.7 · peligro 10.6
+ *   silente  texto 11.5 · secundario 7.0 · botones 7.9 · borde 3.2
+ *
+ * Nunca usar naranja #f47b20 con texto blanco (2.73:1).
+ */
+:root {
+  --sb-bg: #ffffff;
+  --sb-surface: #f3f6fb;
+  --sb-fg: #0b2545;
+  --sb-muted: #5b6b82;
+  --sb-border: #66788f;
+  --sb-primary: #0b2545;
+  --sb-on-primary: #ffffff;
+  --sb-accent: #f47b20;
+  --sb-on-accent: #0b2545;
+  --sb-accent-text: #b54708;
+  --sb-danger: #b42318;
+  --sb-success: #067647;
+  --sb-focus: #f47b20;
+  --sb-focus-ring: #0b2545;
+  --sb-mark: #f47b20;
+  color-scheme: light;
+}
+
+:root[data-contrast="high"] {
+  --sb-bg: #000000;
+  --sb-surface: #000000;
+  --sb-fg: #ffffff;
+  --sb-muted: #ffffff;
+  --sb-border: #ffffff;
+  --sb-primary: #ffffff;
+  --sb-on-primary: #000000;
+  --sb-accent: #ffd400;
+  --sb-on-accent: #000000;
+  --sb-accent-text: #ffd400;
+  --sb-danger: #ff9e9e;
+  --sb-success: #7cfc8a;
+  --sb-focus: #ffd400;
+  --sb-focus-ring: #000000;
+  --sb-mark: #ffd400;
+  color-scheme: dark;
+}
+
+/* Modo silencioso: oscuro y discreto (poca luz), pero legible. */
+:root[data-mode="silent"]:not([data-contrast="high"]) {
+  --sb-bg: #0f1318;
+  --sb-surface: #181d24;
+  --sb-fg: #c3ccd6;
+  --sb-muted: #93a0ae;
+  --sb-border: #5a6674;
+  --sb-primary: #3a4552;
+  --sb-on-primary: #e3e8ee;
+  --sb-accent: #3a4552;
+  --sb-on-accent: #e3e8ee;
+  --sb-accent-text: #c3ccd6;
+  --sb-danger: #f09a92;
+  --sb-success: #86c79a;
+  --sb-focus: #c3ccd6;
+  --sb-focus-ring: #0f1318;
+  --sb-mark: #93a0ae;
+  color-scheme: dark;
+}
+
+@theme inline {
+  --color-bg: var(--sb-bg);
+  --color-surface: var(--sb-surface);
+  --color-fg: var(--sb-fg);
+  --color-muted: var(--sb-muted);
+  --color-line: var(--sb-border);
+  --color-primary: var(--sb-primary);
+  --color-on-primary: var(--sb-on-primary);
+  --color-accent: var(--sb-accent);
+  --color-on-accent: var(--sb-on-accent);
+  --color-accent-text: var(--sb-accent-text);
+  --color-danger: var(--sb-danger);
+  --color-success: var(--sb-success);
+  --color-mark: var(--sb-mark);
+}
+
 @theme {
-  --color-navy-950: #071a33;
-  --color-navy-900: #0b2545;
-  --color-navy-800: #13315c;
-  --color-navy-700: #1d4278;
-  --color-navy-100: #e6edf7;
-  --color-navy-50: #f3f6fb;
-
-  --color-orange-700: #b54708;
-  --color-orange-500: #f47b20;
-  --color-orange-400: #f9a03f;
-  --color-orange-100: #ffd8a8;
-
-  --color-ink: #0b2545;
-  --color-ink-muted: #5b6b82;
-  --color-surface: #ffffff;
-  --color-danger: #b42318;
-  --color-success: #067647;
-
-  --font-display: "Nunito", ui-rounded, "SF Pro Rounded", system-ui, sans-serif;
-  --font-sans: "Nunito", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-
+  --font-display: "Nunito Variable", ui-rounded, "SF Pro Rounded", system-ui, sans-serif;
+  --font-sans:
+    "Nunito Variable", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   --radius-card: 1.25rem;
   --radius-button: 1rem;
-
-  /* Objetivo táctil mínimo exigido por el proyecto. */
+  /* Objetivo táctil mínimo exigido por el proyecto (48 px). */
   --spacing-touch: 3rem;
 }
 
@@ -42,17 +118,27 @@
   html {
     -webkit-text-size-adjust: 100%;
     text-size-adjust: 100%;
+    background: var(--sb-bg);
   }
 
   body {
-    @apply bg-surface font-sans text-ink antialiased;
+    @apply bg-bg font-sans text-fg antialiased;
+    min-height: 100dvh;
   }
 
-  /* Foco siempre visible y con contraste alto, sea cual sea el fondo. */
+  /* Foco siempre visible, con doble anillo para cualquier fondo. */
   :focus-visible {
-    outline: 3px solid var(--color-orange-500);
+    outline: 3px solid var(--sb-focus);
     outline-offset: 3px;
-    box-shadow: 0 0 0 6px var(--color-navy-900);
+    box-shadow: 0 0 0 6px var(--sb-focus-ring);
+    border-radius: 0.5rem;
+  }
+
+  /* El foco que se mueve por programa (títulos, contenido principal) no
+     muestra anillo: el lector de pantalla lo anuncia y no distrae a la vista. */
+  [tabindex="-1"]:focus {
+    outline: none;
+    box-shadow: none;
   }
 
   /* biome-ignore-start lint/complexity/noImportantStyles: reducir movimiento debe ganarle a cualquier animación de componente. */
@@ -67,4 +153,60 @@
     }
   }
   /* biome-ignore-end lint/complexity/noImportantStyles: fin del bloque de movimiento reducido. */
+}
+
+@layer components {
+  /* Radios y casillas propios: borde visible (≥ 3:1) en las tres paletas. */
+  .sb-choice {
+    appearance: none;
+    flex-shrink: 0;
+    width: 1.5rem;
+    height: 1.5rem;
+    border: 2px solid var(--sb-fg);
+    background: var(--sb-bg);
+    display: grid;
+    place-content: center;
+  }
+  .sb-choice[type="radio"] {
+    border-radius: 9999px;
+  }
+  .sb-choice[type="checkbox"] {
+    border-radius: 0.375rem;
+  }
+  .sb-choice::before {
+    content: "";
+    width: 0.75rem;
+    height: 0.75rem;
+    transform: scale(0);
+    background: var(--sb-fg);
+  }
+  .sb-choice[type="radio"]::before {
+    border-radius: 9999px;
+  }
+  .sb-choice[type="checkbox"]::before {
+    clip-path: polygon(14% 44%, 0 65%, 50% 100%, 100% 16%, 80% 0%, 43% 62%);
+    width: 0.9rem;
+    height: 0.9rem;
+  }
+  .sb-choice:checked::before {
+    transform: scale(1);
+  }
+
+  .sb-call-link {
+    @apply inline-flex min-h-touch items-center justify-center rounded-button bg-accent px-6 text-lg font-extrabold text-on-accent;
+  }
+}
+
+@keyframes sb-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
+}
+
+.sb-pulse {
+  animation: sb-pulse 1.6s ease-in-out infinite;
 }
