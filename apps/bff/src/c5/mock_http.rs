@@ -125,6 +125,7 @@ struct LocationBody<'a> {
 #[derive(Serialize)]
 struct VideoCallBody {
     idempotency_key: Uuid,
+    media: &'static str,
 }
 
 #[derive(Deserialize)]
@@ -272,6 +273,7 @@ impl C5Gateway for MockHttpGateway {
                     &path,
                     &VideoCallBody {
                         idempotency_key: request.idempotency_key,
+                        media: request.media.as_str(),
                     },
                 )
                 .await?;

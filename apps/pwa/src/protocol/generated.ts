@@ -99,7 +99,13 @@ accuracy_m?: number, source: LocationSource,
  */
 captured_at: Timestamp, };
 
-export type VideoCallRequest = { client_msg_id: string, client_ts?: Timestamp, traceparent?: string, };
+export type CallMedia = "video" | "audio";
+
+export type VideoCallRequest = { client_msg_id: string, client_ts?: Timestamp, traceparent?: string, 
+/**
+ * `video` (por defecto) o `audio`.
+ */
+media?: CallMedia, };
 
 export type ClientEventKind = "app_opened" | "privacy_notice_shown" | "privacy_notice_opened" | "channel_screen_shown" | "abandoned_before_help" | "quick_exit_used" | "settings_changed" | "permission_granted" | "permission_denied" | "went_offline" | "came_back_online" | "client_error";
 

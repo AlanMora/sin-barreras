@@ -199,6 +199,12 @@ async fn post_location(
 #[derive(Deserialize)]
 struct NewVideoCall {
     idempotency_key: Uuid,
+    #[serde(default = "default_media")]
+    media: String,
+}
+
+fn default_media() -> String {
+    "video".into()
 }
 
 async fn post_video_call(
@@ -218,7 +224,13 @@ async fn post_video_call(
             .as_str()
             .unwrap_or_default()
             .to_owned();
-        operator::on_video_call(Arc::clone(&state), id, body.idempotency_key, video_call_id);
+        operator::on_video_call(
+            Arc::clone(&state),
+            id,
+            body.idempotency_key,
+            video_call_id,
+            body.media,
+        );
     }
     (StatusCode::CREATED, Json(response)).into_response()
 }

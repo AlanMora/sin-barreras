@@ -22,9 +22,9 @@ use std::{
 
 use events::{EventKind, RecordEvent, SensitivePayload};
 use protocol::{
-    Channel, ChatKind, ClientCloseReason, ClientMessage, DeliveryStatus, IncidentCreated,
-    IncidentState, IncidentStatus, LocationSource, MessageStatus, ServerEvent, SessionClosed,
-    SessionClosedReason, Timestamp, VideoCallState, VideoCallUpdate,
+    CallMedia, Channel, ChatKind, ClientCloseReason, ClientMessage, DeliveryStatus,
+    IncidentCreated, IncidentState, IncidentStatus, LocationSource, MessageStatus, ServerEvent,
+    SessionClosed, SessionClosedReason, Timestamp, VideoCallState, VideoCallUpdate,
 };
 use service_kit::backoff::Backoff;
 use uuid::Uuid;
@@ -265,8 +265,13 @@ async fn process(
             // Aún no hay incidente: se guarda la más reciente y se envía al crearlo.
             None => fields.push(("pending_location", command.message_json.clone())),
         },
-        ClientMessage::VideoCallRequest(_) => {
-            let channel = ctx.channel().unwrap_or(Channel::LsmVideo);
+        ClientMessage::VideoCallRequest(m) => {
+            let media = m.media.unwrap_or_default();
+            let default_channel = match media {
+                CallMedia::Video => Channel::LsmVideo,
+                CallMedia::Audio => Channel::Audio,
+            };
+            let channel = ctx.channel().unwrap_or(default_channel);
             let Some(c5_incident_id) =
                 ensure_incident(state, session_id, ctx, channel, cmid, None).await?
             else {
@@ -280,6 +285,7 @@ async fn process(
             let request = VideoCallRequest {
                 idempotency_key: cmid,
                 c5_incident_id,
+                media,
             };
             match with_retry(state, session_id, "request_video_call", || {
                 state.gateway.request_video_call(request.clone())
@@ -289,6 +295,7 @@ async fn process(
                 Ok(video_call_id) => {
                     let record = base(state, EventKind::VideoCallRequested, session_id, ctx)
                         .attr("client_msg_id", cmid.to_string())
+                        .attr("media", media.as_str())
                         .attr("c5_video_call_id", video_call_id)
                         .attr("stage", "forwarded");
                     emit_video(state, session_id, cmid, VideoCallState::Requested, record).await?;

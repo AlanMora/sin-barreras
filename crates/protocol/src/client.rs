@@ -217,6 +217,26 @@ pub struct LocationUpdate {
     pub captured_at: Timestamp,
 }
 
+/// Tipo de llamada solicitada al sistema de videollamadas.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum CallMedia {
+    /// Video (Lengua de Señas Mexicana).
+    #[default]
+    Video,
+    /// Solo voz (canal de audio).
+    Audio,
+}
+
+impl CallMedia {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Video => "video",
+            Self::Audio => "audio",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(deny_unknown_fields)]
 pub struct VideoCallRequest {
@@ -225,6 +245,10 @@ pub struct VideoCallRequest {
     pub client_ts: Option<Timestamp>,
     #[ts(optional)]
     pub traceparent: Option<String>,
+    /// `video` (por defecto) o `audio`.
+    #[serde(default)]
+    #[ts(optional)]
+    pub media: Option<CallMedia>,
 }
 
 /// Eventos de interfaz que deben quedar en el registro aunque no vayan al C5.

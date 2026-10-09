@@ -136,6 +136,7 @@ pub fn on_video_call(
     incident_id: String,
     idempotency_key: Uuid,
     video_call_id: String,
+    media: String,
 ) {
     tokio::spawn(async move {
         pause(1_000, 2_500).await;
@@ -150,7 +151,8 @@ pub fn on_video_call(
                     "video_call_id": video_call_id,
                     "room_url": format!("https://video.mock.invalid/rooms/{video_call_id}"),
                     "token": Uuid::new_v4().simple().to_string(),
-                    "interpreter": "LSM",
+                    "media": media,
+                    "interpreter": if media == "video" { "LSM" } else { "" },
                 },
             }),
         );

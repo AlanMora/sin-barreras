@@ -20,7 +20,7 @@ fn render() -> String {
     let decls = declarations![&cfg;
         // Cliente → servidor
         ClientMessage, Hello, Resume, QrEntry, AccessibilitySettings, Channel, CreateIncident,
-        ChatKind, QuickReply, ClientChatMessage, LocationSource, LocationUpdate, VideoCallRequest,
+        ChatKind, QuickReply, ClientChatMessage, LocationSource, LocationUpdate, CallMedia, VideoCallRequest,
         ClientEventKind, ClientEvent, ClientAck, Ping, ClientCloseReason, ClientClose,
         // Servidor → cliente: control
         ServerControl, EntryVerification, Welcome, IncidentSummary, AckStatus, ServerAck, Pong,

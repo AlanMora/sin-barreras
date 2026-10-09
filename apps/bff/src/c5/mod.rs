@@ -16,7 +16,8 @@ pub mod mock_http;
 
 use futures::{future::BoxFuture, stream::BoxStream};
 use protocol::{
-    Channel, ChatKind, DeliveryStatus, IncidentState, QuickReply, Timestamp, VideoCallState,
+    CallMedia, Channel, ChatKind, DeliveryStatus, IncidentState, QuickReply, Timestamp,
+    VideoCallState,
 };
 use uuid::Uuid;
 
@@ -74,6 +75,8 @@ pub struct LocationReport {
 pub struct VideoCallRequest {
     pub idempotency_key: Uuid,
     pub c5_incident_id: String,
+    /// `video` (LSM) o `audio` (solo voz).
+    pub media: CallMedia,
 }
 
 /// Lo que el C5 nos empuja (mensajes del operador y cambios de estado).
