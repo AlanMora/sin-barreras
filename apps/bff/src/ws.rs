@@ -140,6 +140,12 @@ impl Connection {
             }
         };
         let session_id = established.session_id;
+        let counter = if established.resumed {
+            &state.metrics.sessions_resumed
+        } else {
+            &state.metrics.sessions_started
+        };
+        crate::metrics::Metrics::transport(counter, "websocket");
 
         // Registrarse en el hub ANTES de leer el estado: nada se pierde entre
         // la lectura y la suscripción (los duplicados se descartan por `seq`).

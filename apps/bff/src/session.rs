@@ -11,11 +11,13 @@ use protocol::{
     IncidentState, IncidentSummary, MAX_CLIENT_FRAME_BYTES, PROTOCOL_VERSION, Pong, ServerAck,
     ServerChatMessage, ServerControl, ServerError, ServerEvent, Timestamp, Welcome,
 };
+use tracing::Instrument;
 use uuid::Uuid;
 
 use crate::{
     AppState,
     forwarder::{self, ID_NAMESPACE, location_payload, producer},
+    metrics::Metrics,
     ratelimit::{self, Decision, IpDecision},
     records::SEQ_PLACEHOLDER,
     store::{AcceptCommand, AcceptOutcome, ResumeOutcome},
@@ -225,13 +227,17 @@ pub async fn establish_session(
                 IpDecision::Allow => {}
                 // Volumen inusual desde una IP: se permite (CGNAT, desastres) y se
                 // registra para vigilancia. La IP NO va en el registro en claro.
-                IpDecision::Observe(count) => state.records.record(
-                    RecordEvent::new(EventKind::RateLimited, producer(state))
-                        .attr("scope", "ip")
-                        .attr("action", "observe")
-                        .attr("sessions_last_minute", count),
-                ),
+                IpDecision::Observe(count) => {
+                    Metrics::kind(&state.metrics.rate_limited, "ip_observe");
+                    state.records.record(
+                        RecordEvent::new(EventKind::RateLimited, producer(state))
+                            .attr("scope", "ip")
+                            .attr("action", "observe")
+                            .attr("sessions_last_minute", count),
+                    );
+                }
                 IpDecision::Reject => {
+                    Metrics::kind(&state.metrics.rate_limited, "ip_reject");
                     state.records.record(
                         RecordEvent::new(EventKind::RateLimited, producer(state))
                             .attr("scope", "ip")
@@ -476,6 +482,7 @@ pub async fn handle_command(state: &Arc<AppState>, session_id: Uuid, text: &str)
             .await
                 == Decision::Limit
             {
+                Metrics::kind(&state.metrics.rate_limited, "session");
                 state.records.record(
                     RecordEvent::new(EventKind::RateLimited, producer(state))
                         .session(session_id)
@@ -500,6 +507,20 @@ pub async fn handle_command(state: &Arc<AppState>, session_id: Uuid, text: &str)
 /// atómica) y devuelve el `ack`. Si no se puede guardar, NO hay ack: el
 /// cliente lo conserva en su cola y lo reintenta.
 async fn accept(state: &Arc<AppState>, session_id: Uuid, message: ClientMessage) -> CommandReply {
+    // La traza empieza en la PWA (traceparent) y continúa aquí y hasta el C5.
+    let span = tracing::info_span!("accept_command", kind = message.kind(), %session_id);
+    service_kit::telemetry::continue_trace(&span, message.traceparent());
+    accept_inner(state, session_id, message)
+        .instrument(span)
+        .await
+}
+
+async fn accept_inner(
+    state: &Arc<AppState>,
+    session_id: Uuid,
+    message: ClientMessage,
+) -> CommandReply {
+    let kind = message.kind();
     let cmid = message.client_msg_id();
     let now = Timestamp::now();
     let forward = !matches!(message, ClientMessage::ClientEvent(_));
@@ -544,6 +565,7 @@ async fn accept(state: &Arc<AppState>, session_id: Uuid, message: ClientMessage)
     };
     match state.store.accept(session_id, command).await {
         Ok(AcceptOutcome::Accepted { .. }) => {
+            Metrics::kind(&state.metrics.commands_accepted, kind);
             if forward {
                 forwarder::kick(state, session_id);
             }

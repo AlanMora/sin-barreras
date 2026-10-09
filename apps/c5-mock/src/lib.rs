@@ -28,6 +28,7 @@ use protocol::{IncidentState, Timestamp};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use service_kit::health::{self, NoDependencies};
+use tracing::Instrument;
 use uuid::Uuid;
 
 use crate::{
@@ -98,7 +99,15 @@ async fn chaos_and_auth(
                 .into_response();
         }
     }
-    next.run(request).await
+    // Continúa la traza que propaga el BFF (simula el último salto: el C5).
+    let traceparent = request
+        .headers()
+        .get("traceparent")
+        .and_then(|v| v.to_str().ok())
+        .map(str::to_owned);
+    let span = tracing::info_span!("c5_request", path = %request.uri().path());
+    service_kit::telemetry::continue_trace(&span, traceparent.as_deref());
+    next.run(request).instrument(span).await
 }
 
 #[derive(Deserialize)]

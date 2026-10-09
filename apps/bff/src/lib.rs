@@ -12,6 +12,7 @@ pub mod forwarder;
 pub mod http;
 pub mod hub;
 pub mod inbound;
+pub mod metrics;
 pub mod qr;
 pub mod ratelimit;
 pub mod records;
@@ -52,6 +53,7 @@ pub struct AppState {
     pub records: Arc<Records>,
     pub qr: QrVerifier,
     pub forwarders: Forwarders,
+    pub metrics: Arc<metrics::Metrics>,
 }
 
 impl AppState {
@@ -60,7 +62,7 @@ impl AppState {
         let qr = QrVerifier::new(config.qr_keys.clone()).with_revoked(config.qr_revoked.clone());
         let producer = format!("bff/{}", config.replica_id);
         let records = Records::start(config.record_keys.clone(), valkey.client.clone(), producer);
-        Arc::new(Self {
+        let state = Arc::new(Self {
             config: Arc::new(config),
             store: Store::new(valkey),
             hub: Arc::new(Hub::default()),
@@ -68,7 +70,10 @@ impl AppState {
             records,
             qr,
             forwarders: Forwarders::default(),
-        })
+            metrics: Arc::new(metrics::Metrics::default()),
+        });
+        state.metrics.attach(&state);
+        state
     }
 }
 
@@ -114,8 +119,9 @@ pub fn router(state: Arc<AppState>) -> Router {
             header::CACHE_CONTROL,
             HeaderValue::from_static("no-store"),
         ))
-        .with_state(state)
+        .with_state(Arc::clone(&state))
         .merge(health)
+        .merge(service_kit::metrics::router(Arc::clone(&state.metrics)))
 }
 
 /// Tareas de fondo de cada réplica: bus de mensajes, barrido de pendientes y

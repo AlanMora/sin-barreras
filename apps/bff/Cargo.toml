@@ -17,6 +17,7 @@ fred.workspace = true
 futures.workspace = true
 getrandom.workspace = true
 hmac.workspace = true
+prometheus-client.workspace = true
 protocol.workspace = true
 reqwest.workspace = true
 serde.workspace = true

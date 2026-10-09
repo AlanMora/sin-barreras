@@ -8,7 +8,7 @@ use tokio::sync::watch;
 async fn main() -> anyhow::Result<()> {
     service_kit::health::run_cli_probe_if_requested("RECORD_WRITER_LISTEN_ADDR", 8081);
     let config = Config::from_env()?;
-    service_kit::telemetry::init("record-writer")?;
+    let _telemetry = service_kit::telemetry::init("record-writer")?;
 
     let client = valkey_client::connect_with_retry(&config.valkey).await?;
     // Pool perezoso: si Postgres está caído, el proceso arranca igual y los

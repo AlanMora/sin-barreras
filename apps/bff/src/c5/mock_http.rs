@@ -47,10 +47,15 @@ impl MockHttpGateway {
         path: &str,
         body: &B,
     ) -> Result<R, C5Error> {
-        let response = self
+        let mut request = self
             .http
             .post(format!("{}{path}", self.base_url))
-            .header(API_KEY_HEADER, &self.api_key)
+            .header(API_KEY_HEADER, &self.api_key);
+        // Traza de punta a punta: el C5 recibe el contexto W3C.
+        if let Some(traceparent) = service_kit::telemetry::current_traceparent() {
+            request = request.header("traceparent", traceparent);
+        }
+        let response = request
             .json(body)
             .send()
             .await

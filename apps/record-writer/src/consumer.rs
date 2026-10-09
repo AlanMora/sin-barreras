@@ -14,10 +14,7 @@
 
 use std::{
     collections::HashMap,
-    sync::{
-        Arc,
-        atomic::{AtomicU64, Ordering},
-    },
+    sync::Arc,
     time::{Duration, Instant},
 };
 
@@ -27,6 +24,7 @@ use fred::{
     prelude::Client,
     types::Value,
 };
+use prometheus_client::metrics::counter::Counter;
 use protocol::Timestamp;
 use registry::writer::{Entry, WriteError, Writer};
 use service_kit::backoff::Backoff;
@@ -36,14 +34,14 @@ use crate::config::Tuning;
 
 type RawEntry = (String, HashMap<String, String>);
 
-/// Contadores para observabilidad (Fase 8 los expone como métricas).
+/// Contadores expuestos como métricas Prometheus (`sb_record_writer_*`).
 #[derive(Debug, Default)]
 pub struct Stats {
-    pub inserted: AtomicU64,
-    pub duplicates: AtomicU64,
-    pub dead_lettered: AtomicU64,
-    pub claimed: AtomicU64,
-    pub transient_failures: AtomicU64,
+    pub inserted: Counter,
+    pub duplicates: Counter,
+    pub dead_lettered: Counter,
+    pub claimed: Counter,
+    pub transient_failures: Counter,
 }
 
 pub struct Consumer {
@@ -168,9 +166,7 @@ impl Consumer {
                 false,
             )
             .await?;
-        self.stats
-            .claimed
-            .fetch_add(claimed.len() as u64, Ordering::Relaxed);
+        self.stats.claimed.inc_by(claimed.len() as u64);
         tracing::warn!(
             count = claimed.len(),
             "pendientes de un consumidor inactivo reclamados"
@@ -240,20 +236,14 @@ impl Consumer {
         loop {
             match self.writer.write_batch(batch).await {
                 Ok(outcome) => {
-                    self.stats
-                        .inserted
-                        .fetch_add(outcome.inserted, Ordering::Relaxed);
-                    self.stats
-                        .duplicates
-                        .fetch_add(outcome.duplicates, Ordering::Relaxed);
+                    self.stats.inserted.inc_by(outcome.inserted);
+                    self.stats.duplicates.inc_by(outcome.duplicates);
                     self.ack(&ids).await;
                     return Some(Ok(()));
                 }
                 Err(WriteError::Permanent { reason, .. }) => return Some(Err(reason)),
                 Err(WriteError::Transient(error)) => {
-                    self.stats
-                        .transient_failures
-                        .fetch_add(1, Ordering::Relaxed);
+                    self.stats.transient_failures.inc();
                     tracing::warn!(%error, eventos = batch.len(), "Postgres no disponible; los eventos esperan en el stream");
                     // Renovar la posesión para que nadie los crea abandonados.
                     if last_refresh.elapsed() > self.tuning.claim_idle / 3 {
@@ -336,7 +326,7 @@ impl Consumer {
                 }
             }
         }
-        self.stats.dead_lettered.fetch_add(1, Ordering::Relaxed);
+        self.stats.dead_lettered.inc();
         tracing::error!(
             stream_id = id,
             reason,
@@ -375,6 +365,37 @@ impl Consumer {
             .unwrap_or(0);
         let dlq: u64 = self.client.xlen(DEAD_LETTER_STREAM).await?;
         Ok((lag, dlq))
+    }
+
+    /// Antigüedad (ms desde la época) del evento más viejo aún no guardado:
+    /// el menor entre los pendientes de confirmar y los aún no leídos. El id de
+    /// cada entrada del stream empieza con su hora de llegada.
+    pub async fn oldest_unsaved_ms(&self) -> Result<Option<u64>, fred::error::Error> {
+        let id_ms = |id: &str| id.split('-').next().and_then(|ms| ms.parse::<u64>().ok());
+        let summary: (u64, Option<String>, Option<String>, Value) = self
+            .client
+            .xpending(RECORD_STREAM, RECORD_GROUP, ())
+            .await?;
+        let oldest_pending = summary.1.as_deref().and_then(id_ms);
+        let groups: Vec<HashMap<String, Value>> = self.client.xinfo_groups(RECORD_STREAM).await?;
+        let last_delivered = groups
+            .iter()
+            .find(|g| g.get("name").and_then(|v| v.as_str()).as_deref() == Some(RECORD_GROUP))
+            .and_then(|g| g.get("last-delivered-id").and_then(|v| v.as_string()));
+        let oldest_unread = match last_delivered {
+            Some(last) => {
+                let next: Vec<(String, HashMap<String, String>)> = self
+                    .client
+                    .xrange_values(RECORD_STREAM, format!("({last}"), "+", Some(1))
+                    .await?;
+                next.first().and_then(|(id, _)| id_ms(id))
+            }
+            None => None,
+        };
+        Ok(match (oldest_pending, oldest_unread) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (a, b) => a.or(b),
+        })
     }
 
     pub async fn ping(&self) -> bool {

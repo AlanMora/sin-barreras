@@ -27,11 +27,13 @@ use protocol::{
     SessionClosed, SessionClosedReason, Timestamp, VideoCallState, VideoCallUpdate,
 };
 use service_kit::backoff::Backoff;
+use tracing::Instrument;
 use uuid::Uuid;
 
 use crate::{
     AppState,
     c5::{C5Error, LocationReport, NewIncident, OutboundMessage, VideoCallRequest},
+    metrics::Metrics,
     records::SEQ_PLACEHOLDER,
     store::{PendingCommand, ReleaseOutcome},
     valkey::ValkeyError,
@@ -195,7 +197,15 @@ async fn forward_session(state: &Arc<AppState>, session_id: Uuid) -> Result<(), 
             }
         }
         for command in pending {
-            process(state, session_id, &mut ctx, &command).await?;
+            // Cada comando continúa la traza que inició la PWA (traceparent).
+            let traceparent = serde_json::from_str::<ClientMessage>(&command.message_json)
+                .ok()
+                .and_then(|m| m.traceparent().map(str::to_owned));
+            let span = tracing::info_span!("forward_command", %session_id);
+            service_kit::telemetry::continue_trace(&span, traceparent.as_deref());
+            process(state, session_id, &mut ctx, &command)
+                .instrument(span)
+                .await?;
         }
     }
 }
@@ -253,6 +263,12 @@ async fn process(
             .await?
             {
                 Ok(c5_message_id) => {
+                    let waited_ms = Timestamp::now().unix_millis() - command.received_at_ms;
+                    #[allow(clippy::cast_precision_loss)]
+                    state
+                        .metrics
+                        .delivery_latency_seconds
+                        .observe(waited_ms.max(0) as f64 / 1000.0);
                     let record = base(state, EventKind::CitizenMessageForwarded, session_id, ctx)
                         .attr("client_msg_id", cmid.to_string())
                         .attr("c5_message_id", c5_message_id);
@@ -538,8 +554,12 @@ where
         }
         match call().await {
             Ok(value) => return Ok(Ok(value)),
-            Err(C5Error::Rejected(reason)) => return Ok(Err(reason)),
+            Err(C5Error::Rejected(reason)) => {
+                Metrics::kind(&state.metrics.c5_errors, operation);
+                return Ok(Err(reason));
+            }
             Err(C5Error::Transient(reason)) => {
+                Metrics::kind(&state.metrics.c5_errors, operation);
                 let attempt = backoff.attempt() + 1;
                 tracing::warn!(%session_id, operation, attempt, "falla temporal del C5; reintentando");
                 // Se registra el 1.º, 2.º, 4.º, 8.º… intento para no inundar el registro.

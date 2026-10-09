@@ -114,6 +114,12 @@ pub async fn hello(
             return reply(StatusCode::SERVICE_UNAVAILABLE, err);
         }
     };
+    let counter = if established.resumed {
+        &state.metrics.sessions_resumed
+    } else {
+        &state.metrics.sessions_started
+    };
+    crate::metrics::Metrics::transport(counter, "http");
     let welcome = match session::welcome(&state, &established).await {
         Ok(w) => w,
         Err(_) => {

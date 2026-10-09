@@ -14,7 +14,7 @@ async fn main() -> anyhow::Result<()> {
         return sign_qr(&config, &args[2..]);
     }
 
-    service_kit::telemetry::init("bff")?;
+    let _telemetry = service_kit::telemetry::init("bff")?;
     if config.allowed_origins.is_empty() {
         tracing::warn!("ALLOWED_ORIGINS vacío: solo se aceptarán clientes sin cabecera Origin");
     }

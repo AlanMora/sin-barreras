@@ -6,6 +6,7 @@
 
 pub mod config;
 pub mod consumer;
+pub mod metrics;
 
 use std::{collections::BTreeMap, sync::Arc, time::Duration};
 
@@ -42,7 +43,9 @@ impl ReadinessProbe for Probe {
 }
 
 pub fn router(consumer: Arc<Consumer>) -> Router {
+    let metrics = Arc::new(metrics::WriterMetrics::new(Arc::clone(&consumer)));
     health::router(Probe(consumer), env!("CARGO_PKG_VERSION"))
+        .merge(service_kit::metrics::router(metrics))
 }
 
 /// Arranca consumo, reclamo de abandonados y checkpoints.
