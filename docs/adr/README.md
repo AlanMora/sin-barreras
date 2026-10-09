@@ -23,5 +23,7 @@ escribe uno nuevo que lo reemplaza y se marca el anterior como "Reemplazado".
 | [0015](0015-valkey-fsync-always.md) | Valkey con `appendfsync always` (reemplaza parte del 0003) | Aceptado |
 | [0016](0016-registro-sin-perdida.md) | Registro sin pérdida: escritura atómica, consumer groups e idempotencia | Aceptado |
 | [0017](0017-retencion.md) | Retención configurable, sin borrado automático (borrado criptográfico) | Aceptado |
+| [0018](0018-transporte-http-de-respaldo.md) | Transporte HTTP de respaldo con la misma semántica que el WebSocket | Aceptado |
+| [0019](0019-i18n-propia.md) | i18n propia, tipada y sin dependencias | Aceptado |
 
 Plantilla: copia [`0000-plantilla.md`](0000-plantilla.md).
