@@ -9,7 +9,7 @@
 //! Un QR inválido NO bloquea la ayuda (ADR-0007): la sesión sigue como
 //! "no verificada".
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use hmac::{Hmac, KeyInit, Mac};
@@ -23,17 +23,30 @@ pub const DEFAULT_KEY_ID: &str = "1";
 #[derive(Clone, Default)]
 pub struct QrVerifier {
     keys: HashMap<String, Vec<u8>>,
+    /// Puntos revocados (QR robado, dañado o retirado).
+    revoked: HashSet<String>,
 }
 
 impl QrVerifier {
     pub fn new(keys: HashMap<String, Vec<u8>>) -> Self {
-        Self { keys }
+        Self {
+            keys,
+            revoked: HashSet::new(),
+        }
+    }
+
+    pub fn with_revoked(mut self, revoked: HashSet<String>) -> Self {
+        self.revoked = revoked;
+        self
     }
 
     pub fn verify(&self, entry: Option<&QrEntry>) -> EntryVerification {
         let Some(entry) = entry else {
             return EntryVerification::None;
         };
+        if self.revoked.contains(&entry.point_id) {
+            return EntryVerification::Unverified;
+        }
         let key_id = entry.key_id.as_deref().unwrap_or(DEFAULT_KEY_ID);
         let Some(key) = self.keys.get(key_id) else {
             return EntryVerification::Unverified;
@@ -134,6 +147,16 @@ mod tests {
         );
         assert_eq!(
             v.verify(Some(&entry("TOT-0142", Some("1"), "AAAA"))),
+            EntryVerification::Unverified
+        );
+    }
+
+    #[test]
+    fn revoked_points_are_unverified_even_with_valid_signature() {
+        let v = verifier().with_revoked(HashSet::from(["TOT-0142".to_owned()]));
+        let sig = v.sign("1", "TOT-0142").unwrap();
+        assert_eq!(
+            v.verify(Some(&entry("TOT-0142", Some("1"), &sig))),
             EntryVerification::Unverified
         );
     }

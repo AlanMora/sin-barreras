@@ -16,6 +16,7 @@ use uuid::Uuid;
 use crate::{
     AppState,
     forwarder::{self, ID_NAMESPACE, location_payload, producer},
+    ratelimit::{self, Decision, IpDecision},
     records::SEQ_PLACEHOLDER,
     store::{AcceptCommand, AcceptOutcome, ResumeOutcome},
     token,
@@ -134,6 +135,11 @@ pub fn parse_hello(text: &str) -> Result<(Hello, Vec<&'static str>), HelloError>
     }
 }
 
+/// Límite duro por IP excedido (solo activo ante un ataque, ver ADR-0020).
+#[derive(Debug, thiserror::Error)]
+#[error("límite de sesiones nuevas por IP excedido")]
+pub struct RateLimitedError;
+
 pub struct Established {
     pub session_id: Uuid,
     pub token: String,
@@ -209,6 +215,31 @@ pub async fn establish_session(
     let established = match established {
         Some(e) => e,
         None => {
+            match ratelimit::check_new_session(
+                state.store.valkey(),
+                &state.config.limits,
+                network.ip.as_deref().unwrap_or("-"),
+            )
+            .await
+            {
+                IpDecision::Allow => {}
+                // Volumen inusual desde una IP: se permite (CGNAT, desastres) y se
+                // registra para vigilancia. La IP NO va en el registro en claro.
+                IpDecision::Observe(count) => state.records.record(
+                    RecordEvent::new(EventKind::RateLimited, producer(state))
+                        .attr("scope", "ip")
+                        .attr("action", "observe")
+                        .attr("sessions_last_minute", count),
+                ),
+                IpDecision::Reject => {
+                    state.records.record(
+                        RecordEvent::new(EventKind::RateLimited, producer(state))
+                            .attr("scope", "ip")
+                            .attr("action", "reject"),
+                    );
+                    return Err(Box::new(RateLimitedError));
+                }
+            }
             let session_id = Uuid::now_v7();
             let entry = state.qr.verify(hello.entry.as_ref());
             let point_id = hello
@@ -435,7 +466,33 @@ pub async fn handle_command(state: &Arc<AppState>, session_id: Uuid, text: &str)
             );
             CommandReply::Nothing
         }
-        _ => accept(state, session_id, message).await,
+        _ => {
+            if ratelimit::check_command(
+                state.store.valkey(),
+                &state.config.limits,
+                session_id,
+                &message,
+            )
+            .await
+                == Decision::Limit
+            {
+                state.records.record(
+                    RecordEvent::new(EventKind::RateLimited, producer(state))
+                        .session(session_id)
+                        .attr("scope", "session")
+                        .attr("message_type", message.kind())
+                        .attr("client_msg_id", cmid.to_string()),
+                );
+                // Reintentable: el comando sigue en la cola del cliente, no se pierde.
+                return CommandReply::Reply(error(
+                    ErrorCode::RateLimited,
+                    "demasiados mensajes; se reintentará".into(),
+                    Some(cmid),
+                    true,
+                ));
+            }
+            accept(state, session_id, message).await
+        }
     }
 }
 

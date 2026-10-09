@@ -261,6 +261,7 @@ dependencies = [
  "tokio",
  "tokio-tungstenite 0.30.0",
  "tower",
+ "tower-http 0.7.1",
  "tracing",
  "uuid",
  "valkey-client",
@@ -2441,7 +2442,7 @@ dependencies = [
  "tokio",
  "tokio-rustls",
  "tower",
- "tower-http",
+ "tower-http 0.6.11",
  "tower-service",
  "url",
  "wasm-bindgen",
@@ -2599,12 +2600,15 @@ dependencies = [
  "events",
  "fred",
  "getrandom 0.4.3",
+ "protocol",
  "registry",
  "serde_json",
  "service-kit",
  "sqlx",
+ "time",
  "tokio",
  "tracing",
+ "uuid",
  "valkey-client",
 ]
 
@@ -3507,6 +3511,24 @@ dependencies = [
  "tower-layer",
  "tower-service",
  "url",
+]
+
+[[package]]
+name = "tower-http"
+version = "0.7.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "08a05a66a4fdd61cbbe0a1d755ffe0ca6aba159dd4820936a0ff8a8278245b9c"
+dependencies = [
+ "bitflags 2.13.2",
+ "bytes",
+ "http",
+ "http-body",
+ "percent-encoding",
+ "pin-project-lite",
+ "tokio",
+ "tower-layer",
+ "tower-service",
+ "tracing",
 ]
 
 [[package]]

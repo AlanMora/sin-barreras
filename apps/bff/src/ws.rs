@@ -49,6 +49,7 @@ const CLOSE_HELLO_TIMEOUT: u16 = 4408;
 const CLOSE_IDLE: u16 = 4409;
 const CLOSE_SESSION_GONE: u16 = 4410;
 const CLOSE_UNSUPPORTED_VERSION: u16 = 4426;
+const CLOSE_RATE_LIMITED: u16 = 4429;
 const CLOSE_UNAVAILABLE: u16 = 4503;
 
 pub async fn handler(
@@ -114,6 +115,17 @@ impl Connection {
         let established = match session::establish_session(&state, &hello, &dropped, &network).await
         {
             Ok(e) => e,
+            Err(e) if e.downcast_ref::<session::RateLimitedError>().is_some() => {
+                let reply = error(
+                    ErrorCode::RateLimited,
+                    "demasiadas sesiones; reintenta".into(),
+                    Some(hello.client_msg_id),
+                    true,
+                );
+                let _ = send_control(&mut sink, reply).await;
+                close(&mut sink, CLOSE_RATE_LIMITED, "demasiadas sesiones").await;
+                return;
+            }
             Err(e) => {
                 tracing::error!(error = %e, "no se pudo establecer la sesión");
                 let reply = error(

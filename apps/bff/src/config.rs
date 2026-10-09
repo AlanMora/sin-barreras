@@ -1,11 +1,15 @@
 //! Configuración del BFF, leída de variables de entorno y Docker secrets.
 
-use std::{collections::HashMap, net::SocketAddr, time::Duration};
+use std::{
+    collections::{HashMap, HashSet},
+    net::SocketAddr,
+    time::Duration,
+};
 
 use crypto::{OperationalKey, RecipientPublicKey};
 use service_kit::config::{ConfigError, env_or, secret};
 
-use crate::records::RecordKeys;
+use crate::{ratelimit::Limits, records::RecordKeys};
 
 #[derive(Debug, Clone)]
 pub struct Config {
@@ -28,6 +32,11 @@ pub struct Config {
     /// investigación) y `RECORD_OPERATIONAL_KEYS(_FILE)` (`id:base64,…`, la
     /// primera es la activa).
     pub record_keys: RecordKeys,
+    /// Umbrales de rate limiting (`RATE_*`, ver ADR-0020).
+    pub limits: Limits,
+    /// Puntos con QR revocado (`QR_REVOKED_POINTS`, separados por coma): sus
+    /// QR quedan "no verificados" aunque la firma sea válida.
+    pub qr_revoked: HashSet<String>,
 }
 
 pub use valkey_client::ValkeyConfig;
@@ -80,8 +89,27 @@ impl Config {
                 .collect(),
             forward_lease_ttl: Duration::from_millis(env_or("FORWARD_LEASE_TTL_MS", 15_000)?),
             record_keys: record_keys_from_env()?,
+            limits: limits_from_env()?,
+            qr_revoked: env_or("QR_REVOKED_POINTS", String::new())?
+                .split(',')
+                .map(|p| p.trim().to_uppercase())
+                .filter(|p| !p.is_empty())
+                .collect(),
         })
     }
+}
+
+fn limits_from_env() -> Result<Limits, ConfigError> {
+    let d = Limits::default();
+    Ok(Limits {
+        chat_per_min: env_or("RATE_CHAT_PER_MIN", d.chat_per_min)?,
+        free_messages: env_or("RATE_FREE_MESSAGES", d.free_messages)?,
+        location_per_min: env_or("RATE_LOCATION_PER_MIN", d.location_per_min)?,
+        client_events_per_min: env_or("RATE_CLIENT_EVENTS_PER_MIN", d.client_events_per_min)?,
+        call_requests_per_min: env_or("RATE_CALL_REQUESTS_PER_MIN", d.call_requests_per_min)?,
+        ip_observe_per_min: env_or("RATE_IP_OBSERVE_PER_MIN", d.ip_observe_per_min)?,
+        ip_hard_per_min: env_or("RATE_IP_HARD_PER_MIN", d.ip_hard_per_min)?,
+    })
 }
 
 fn record_keys_from_env() -> Result<RecordKeys, ConfigError> {

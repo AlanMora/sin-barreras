@@ -91,6 +91,7 @@ pub struct Scripts {
     pub lease_acquire: Script,
     pub lease_release: Script,
     pub mark_forwarded: Script,
+    pub rate: Script,
 }
 
 impl Scripts {
@@ -105,6 +106,7 @@ impl Scripts {
             lease_acquire: Script::from_lua(include_str!("lua/lease_acquire.lua")),
             lease_release: Script::from_lua(include_str!("lua/lease_release.lua")),
             mark_forwarded: Script::from_lua(include_str!("lua/mark_forwarded.lua")),
+            rate: Script::from_lua(include_str!("lua/rate.lua")),
         }
     }
 }

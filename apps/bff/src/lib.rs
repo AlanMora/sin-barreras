@@ -13,6 +13,7 @@ pub mod http;
 pub mod hub;
 pub mod inbound;
 pub mod qr;
+pub mod ratelimit;
 pub mod records;
 pub mod session;
 pub mod store;
@@ -25,10 +26,12 @@ use std::{collections::BTreeMap, sync::Arc, time::Duration};
 use axum::{
     Router,
     extract::DefaultBodyLimit,
+    http::{HeaderValue, header},
     routing::{get, post},
 };
 use service_kit::health::{self, CheckStatus, ReadinessProbe};
 use tokio::task::JoinHandle;
+use tower_http::set_header::SetResponseHeaderLayer;
 
 use crate::{
     c5::C5Gateway,
@@ -54,7 +57,7 @@ pub struct AppState {
 impl AppState {
     /// Debe llamarse dentro de un runtime de tokio (arranca la tarea del registro).
     pub fn new(config: Config, valkey: Valkey, gateway: Arc<dyn C5Gateway>) -> Arc<Self> {
-        let qr = QrVerifier::new(config.qr_keys.clone());
+        let qr = QrVerifier::new(config.qr_keys.clone()).with_revoked(config.qr_revoked.clone());
         let producer = format!("bff/{}", config.replica_id);
         let records = Records::start(config.record_keys.clone(), valkey.client.clone(), producer);
         Arc::new(Self {
@@ -98,6 +101,19 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/v1/hello", post(http::hello))
         .route("/api/v1/sync", post(http::sync))
         .layer(DefaultBodyLimit::max(http::MAX_BODY_BYTES))
+        // Cabeceras de seguridad en todas las respuestas del BFF.
+        .layer(SetResponseHeaderLayer::overriding(
+            header::X_CONTENT_TYPE_OPTIONS,
+            HeaderValue::from_static("nosniff"),
+        ))
+        .layer(SetResponseHeaderLayer::overriding(
+            header::REFERRER_POLICY,
+            HeaderValue::from_static("no-referrer"),
+        ))
+        .layer(SetResponseHeaderLayer::overriding(
+            header::CACHE_CONTROL,
+            HeaderValue::from_static("no-store"),
+        ))
         .with_state(state)
         .merge(health)
 }

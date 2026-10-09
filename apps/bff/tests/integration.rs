@@ -652,3 +652,35 @@ async fn chat_as_first_message_uses_distinct_idempotency_keys() {
     );
     assert_ne!(create_key, Some(chat_id));
 }
+
+/// Rate limiting (ADR-0020): el exceso se pospone (reintentable), pedir ayuda nunca.
+#[tokio::test]
+async fn rate_limit_postpones_excess_but_never_blocks_asking_for_help() {
+    let (_valkey, url) = start_valkey().await;
+    let bff = TestBff::start(&url, "bff-a", Arc::new(InMemoryGateway::default())).await;
+    let mut client = Client::connect(bff.addr).await;
+    client.hello(json!({})).await;
+
+    // El pedido de ayuda nunca se limita.
+    let (_, ack) = client.command(create_incident("text_chat")).await;
+    assert!(is_ack(&ack, AckStatus::Accepted));
+    let mut accepted = 0;
+    let mut limited = 0;
+    for i in 0..20 {
+        match client.command(chat(&format!("mensaje {i}"))).await.1 {
+            ServerControl::Ack(_) => accepted += 1,
+            ServerControl::Error(e) => {
+                assert_eq!(e.code, ErrorCode::RateLimited);
+                assert!(e.retryable, "el exceso se reintenta, no se pierde");
+                limited += 1;
+            }
+            other => panic!("inesperado: {other:?}"),
+        }
+    }
+    // 3 mensajes libres + 10 por minuto.
+    assert_eq!(accepted, 13);
+    assert_eq!(limited, 7);
+    // Aun excedido el límite, otro create_incident (idempotente) se acepta.
+    let (_, ack) = client.command(create_incident("text_chat")).await;
+    assert!(is_ack(&ack, AckStatus::Accepted));
+}

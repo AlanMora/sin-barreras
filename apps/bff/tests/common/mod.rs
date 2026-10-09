@@ -152,6 +152,12 @@ impl TestBff {
             allowed_origins: vec!["http://localhost:5173".to_owned()],
             forward_lease_ttl: Duration::from_secs(2),
             record_keys: test_keys().1.clone(),
+            limits: bff::ratelimit::Limits {
+                chat_per_min: 10,
+                free_messages: 3,
+                ..Default::default()
+            },
+            qr_revoked: std::collections::HashSet::new(),
         };
         let (ready_tx, ready_rx) = oneshot::channel();
         let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();

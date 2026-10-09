@@ -94,6 +94,15 @@ pub async fn hello(
     let network = NetworkInfo::from_request(&headers, peer);
     let established = match session::establish_session(&state, &hello, &dropped, &network).await {
         Ok(e) => e,
+        Err(e) if e.downcast_ref::<session::RateLimitedError>().is_some() => {
+            let err = error(
+                ErrorCode::RateLimited,
+                "demasiadas sesiones; reintenta".into(),
+                Some(hello.client_msg_id),
+                true,
+            );
+            return reply(StatusCode::TOO_MANY_REQUESTS, err);
+        }
         Err(e) => {
             tracing::error!(error = %e, "no se pudo establecer la sesión (HTTP)");
             let err = error(
