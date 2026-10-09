@@ -1,0 +1,18 @@
+[package]
+name = "valkey-client"
+version = "0.1.0"
+description = "Conexión a Valkey compartida por los servicios: TLS verificado, timeouts y reconexión."
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+fred.workspace = true
+service-kit.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+
+[lints]
+workspace = true

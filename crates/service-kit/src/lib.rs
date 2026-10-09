@@ -3,6 +3,7 @@
 //! Se mantienen aquí para que BFF, record-writer y c5-mock se comporten igual
 //! en logs, configuración, health checks y apagado.
 
+pub mod backoff;
 pub mod config;
 pub mod health;
 pub mod shutdown;

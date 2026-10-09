@@ -107,8 +107,15 @@ pub fn probe(port: u16) -> bool {
 
 /// Si el proceso se invocó como `<binario> healthcheck`, ejecuta la sonda y
 /// termina el proceso con código 0 (sano) o 1 (no sano). Si no, no hace nada.
-pub fn run_cli_probe_if_requested(port: u16) {
+///
+/// Solo necesita la variable de la dirección de escucha (`listen_var`): la
+/// sonda no debe fallar porque otra parte de la configuración sea inválida.
+pub fn run_cli_probe_if_requested(listen_var: &str, default_port: u16) {
     if std::env::args().nth(1).as_deref() == Some("healthcheck") {
+        let port = std::env::var(listen_var)
+            .ok()
+            .and_then(|addr| addr.parse::<SocketAddr>().ok())
+            .map_or(default_port, |addr| addr.port());
         std::process::exit(if probe(port) { 0 } else { 1 });
     }
 }
