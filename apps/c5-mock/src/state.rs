@@ -32,6 +32,8 @@ pub struct Incident {
 
 pub struct MockState {
     pub config: Config,
+    /// Identificador de este arranque: los ids nunca se repiten entre reinicios.
+    pub boot: String,
     pub chaos: Mutex<Chaos>,
     inner: Mutex<Inner>,
     pub feed: broadcast::Sender<String>,
@@ -52,8 +54,10 @@ impl MockState {
     pub fn new(config: Config) -> Self {
         let (feed, _) = broadcast::channel(1024);
         let chaos = Mutex::new(config.chaos);
+        let boot = format!("{:04X}", (random_unit() * 65_536.0) as u32);
         Self {
             config,
+            boot,
             chaos,
             inner: Mutex::default(),
             feed,
@@ -84,6 +88,7 @@ impl MockState {
                 ..
             } = &mut *inner;
             create(&mut IdGen {
+                boot: &self.boot,
                 next_incident,
                 next_message,
             })
@@ -120,7 +125,7 @@ impl MockState {
         let seq = inner.next_event;
         let mut event = json!({
             "event_seq": seq,
-            "event_id": format!("EVT-{seq:08}"),
+            "event_id": format!("EVT-{}-{seq:08}", self.boot),
             "incident_id": incident_id,
             "occurred_at": Timestamp::now(),
         });
@@ -151,6 +156,7 @@ impl MockState {
 }
 
 pub struct IdGen<'a> {
+    boot: &'a str,
     next_incident: &'a mut u64,
     next_message: &'a mut u64,
 }
@@ -158,12 +164,12 @@ pub struct IdGen<'a> {
 impl IdGen<'_> {
     pub fn incident(&mut self) -> String {
         *self.next_incident += 1;
-        format!("C5M-{:06}", self.next_incident)
+        format!("C5M-{}-{:06}", self.boot, self.next_incident)
     }
 
     pub fn message(&mut self) -> String {
         *self.next_message += 1;
-        format!("MSG-{:08}", self.next_message)
+        format!("MSG-{}-{:08}", self.boot, self.next_message)
     }
 }
 

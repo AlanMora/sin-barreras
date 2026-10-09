@@ -73,8 +73,11 @@ pub fn c5_incident_key(c5_incident_id: &str) -> String {
     format!("sb:c5i:{c5_incident_id}")
 }
 
-pub fn c5_event_key(c5_event_id: &str) -> String {
-    format!("sb:c5e:{c5_event_id}")
+/// Llave de deduplicación de un evento del C5. Se acota por incidente: si el
+/// C5 reutilizara ids de evento (p. ej. tras reiniciarse), no se confundirían
+/// eventos de incidentes distintos.
+pub fn c5_event_key(c5_incident_id: &str, c5_event_id: &str) -> String {
+    format!("sb:c5e:{c5_incident_id}:{c5_event_id}")
 }
 
 /// Scripts precompilados (se cargan por SHA y se recargan si Valkey reinicia).

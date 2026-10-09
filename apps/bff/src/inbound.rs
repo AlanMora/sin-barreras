@@ -162,7 +162,7 @@ pub async fn handle(state: &Arc<AppState>, event: &C5InboundEvent) -> Result<(),
                 .attr("seq", SEQ_PLACEHOLDER),
         ])
         .await;
-    let dedupe_key = c5_event_key(&event.event_id);
+    let dedupe_key = c5_event_key(&event.c5_incident_id, &event.event_id);
     let outcome = state
         .store
         .emit(

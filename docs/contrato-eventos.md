@@ -104,6 +104,16 @@ Todos llevan además `seq` y `server_ts`.
 La sesión vive mientras haya actividad: 30 min sin incidente; 12 h con un
 incidente abierto (configurable, ADR-0010).
 
+## Evolución del protocolo y orden de despliegue
+
+El BFF rechaza los campos desconocidos. Por eso:
+
+- **Cambios compatibles** (agregar un campo opcional o un tipo nuevo): se
+  despliega **primero el BFF** y después la PWA. Si fuera al revés, una PWA nueva
+  hablando con un BFF viejo vería sus mensajes rechazados.
+- **Cambios incompatibles**: se sube `PROTOCOL_VERSION`; el BFF acepta ambas
+  versiones durante la transición y la PWA vieja recibe `4426` y se actualiza.
+
 ## Códigos de cierre
 
 | Código | Motivo |

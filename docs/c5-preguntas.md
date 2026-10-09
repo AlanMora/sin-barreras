@@ -33,8 +33,9 @@ de `C5Gateway`. Mientras no haya respuesta, el BFF usa el simulador
 19. Si los eventos del C5 llegan por un canal persistente, ¿es posible
     **reanudar desde un cursor** (último evento recibido) tras una desconexión?
     ¿Pueden entregar el mismo evento a varias réplicas, o solo a una?
-20. ¿Cada evento del C5 trae un **identificador único** con el que podamos
-    descartar repetidos?
+20. ¿Cada evento del C5 trae un **identificador único global y permanente**
+    con el que podamos descartar repetidos? ¿Puede repetirse tras un reinicio
+    o una migración del C5? (Hoy deduplicamos por incidente + evento.)
 21. ¿Hay una operación para que el ciudadano **termine la conversación** o
     indique que ya está a salvo? ¿Y para avisar que **leyó** los mensajes del
     operador?
@@ -48,6 +49,8 @@ de `C5Gateway`. Mientras no haya respuesta, el BFF usa el simulador
     operador lo distinga sin dejar de atenderlo?
 
 ## Videollamada (sistema del otro equipo)
+13b. ¿El sistema soporta llamadas **solo de audio** además de video LSM? La PWA
+    ya envía `media: "audio" | "video"` en la solicitud.
 13. ¿Quién inicia la videollamada y qué datos necesita el componente para
     abrirse (URL, token, identificador de sala)?
 14. ¿Qué identificadores, horas de inicio y fin y metadatos nos pueden
