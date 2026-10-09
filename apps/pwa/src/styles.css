@@ -1,0 +1,70 @@
+@import "tailwindcss";
+
+/*
+ * Design tokens de Sin Barreras (propuesta inicial; se afinan en la Fase 3).
+ * Contrastes verificados contra WCAG 2.1 AA:
+ *   navy-900 sobre blanco ........ 15.39:1
+ *   navy-700 sobre blanco ......... 9.99:1
+ *   orange-500 con texto navy-900 . 5.64:1  ← botones de acento
+ *   orange-700 sobre blanco ....... 5.43:1  ← naranja como texto
+ *   orange-500 con texto blanco ... 2.73:1  ✗ NO usar
+ */
+@theme {
+  --color-navy-950: #071a33;
+  --color-navy-900: #0b2545;
+  --color-navy-800: #13315c;
+  --color-navy-700: #1d4278;
+  --color-navy-100: #e6edf7;
+  --color-navy-50: #f3f6fb;
+
+  --color-orange-700: #b54708;
+  --color-orange-500: #f47b20;
+  --color-orange-400: #f9a03f;
+  --color-orange-100: #ffd8a8;
+
+  --color-ink: #0b2545;
+  --color-ink-muted: #5b6b82;
+  --color-surface: #ffffff;
+  --color-danger: #b42318;
+  --color-success: #067647;
+
+  --font-display: "Nunito", ui-rounded, "SF Pro Rounded", system-ui, sans-serif;
+  --font-sans: "Nunito", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+
+  --radius-card: 1.25rem;
+  --radius-button: 1rem;
+
+  /* Objetivo táctil mínimo exigido por el proyecto. */
+  --spacing-touch: 3rem;
+}
+
+@layer base {
+  html {
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+  }
+
+  body {
+    @apply bg-surface font-sans text-ink antialiased;
+  }
+
+  /* Foco siempre visible y con contraste alto, sea cual sea el fondo. */
+  :focus-visible {
+    outline: 3px solid var(--color-orange-500);
+    outline-offset: 3px;
+    box-shadow: 0 0 0 6px var(--color-navy-900);
+  }
+
+  /* biome-ignore-start lint/complexity/noImportantStyles: reducir movimiento debe ganarle a cualquier animación de componente. */
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+  /* biome-ignore-end lint/complexity/noImportantStyles: fin del bloque de movimiento reducido. */
+}
