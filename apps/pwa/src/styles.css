@@ -23,49 +23,69 @@
  * Los componentes usan SOLO tokens semánticos. Las tres paletas (normal, alto
  * contraste y modo silencioso) redefinen los tokens. Contrastes calculados para
  * todas las combinaciones usadas (WCAG 2.1 AA): texto ≥ 4.5:1, componentes y
- * gráficos ≥ 3:1. Mínimos: normal 4.52 · alto contraste 10.6 · silencioso 3.14.
+ * gráficos ≥ 3:1. Mínimos: alto contraste 10.6 · silencioso 3.14.
+ *
+ * Paleta normal (vidrio): las superficies son translúcidas, así que el
+ * contraste se calculó contra el PEOR caso: la zona más clara del degradado
+ * (#0e3290 + 35 % del brillo #1d4ed8) con superficie de 12 % blanco encima
+ * (≈ #2f53b3). Ahí: texto 7.0 · secundario 5.1 · borde de controles 4.1 ·
+ * naranja de texto 4.5 · éxito 5.3 · error 4.7. Sobre el fondo típico todos
+ * superan 8:1.
  *
  * Nunca usar el naranja #f47b20 con texto blanco (2.73:1).
  */
 :root {
-  --sb-bg: #f3f6fb;
-  --sb-surface: #ffffff;
-  --sb-surface-2: #eef2f8;
-  --sb-fg: #0b2545;
-  --sb-muted: #56657c;
-  --sb-border: #66788f;
-  --sb-border-soft: #dde4ee;
-  --sb-primary: #0b2545;
+  /* Azul rey institucional con efecto vidrio (glassmorphism). */
+  --sb-bg: #0a2060;
+  --sb-bg-image:
+    radial-gradient(60% 38% at 100% 0%, rgb(56 189 248 / 0.22), transparent 70%),
+    radial-gradient(75% 45% at 0% 100%, rgb(29 78 216 / 0.5), transparent 70%),
+    linear-gradient(180deg, #0a2060 0%, #0e3290 100%);
+  --sb-surface: rgb(255 255 255 / 0.08);
+  --sb-surface-2: rgb(255 255 255 / 0.12);
+  --sb-fg: #ffffff;
+  --sb-muted: #d3ddf5;
+  --sb-border: #b4c6ee;
+  --sb-border-soft: rgb(147 197 253 / 0.28);
+  --sb-glass-border: rgb(125 211 252 / 0.42);
+  --sb-glass-shine: rgb(255 255 255 / 0.14);
+  --sb-blur: blur(16px) saturate(140%);
+  --sb-primary: #2563eb;
   --sb-on-primary: #ffffff;
   --sb-accent: #f47b20;
-  --sb-on-accent: #0b2545;
-  --sb-accent-text: #b54708;
-  --sb-success: #067647;
-  --sb-success-soft: #e3f5ec;
-  --sb-danger: #b42318;
-  --sb-danger-soft: #fdecea;
-  --sb-warning-soft: #fff4e5;
+  --sb-on-accent: #061433;
+  --sb-accent-text: #ffc59a;
+  --sb-success: #8af5b5;
+  --sb-success-soft: rgb(74 222 128 / 0.14);
+  --sb-danger: #ffc7c7;
+  --sb-danger-soft: rgb(248 113 113 / 0.16);
+  --sb-warning-soft: rgb(251 146 60 / 0.14);
   --sb-focus: #f47b20;
-  --sb-focus-ring: #0b2545;
+  --sb-focus-ring: #0a2060;
   --sb-mark: #f47b20;
-  --sb-hero-from: #0b2545;
-  --sb-hero-to: #1d4278;
-  --sb-hero-fg: #ffffff;
-  --sb-hero-muted: #c9d6ea;
-  --sb-hero-glow: rgb(244 123 32 / 0.45);
-  --sb-shadow: 0 1px 2px rgb(11 37 69 / 0.06), 0 4px 16px rgb(11 37 69 / 0.06);
-  --sb-shadow-lg: 0 10px 30px rgb(11 37 69 / 0.14);
-  --sb-tint-1: #fff0e3;
-  --sb-tint-1-fg: #b54708;
-  --sb-tint-2: #e8eef8;
-  --sb-tint-2-fg: #0b2545;
-  --sb-tint-3: #e3f5ec;
-  --sb-tint-3-fg: #067647;
-  --sb-tint-4: #efeafd;
-  --sb-tint-4-fg: #5b3cc4;
-  --sb-tint-5: #eceff4;
-  --sb-tint-5-fg: #334155;
-  color-scheme: light;
+  --sb-shadow: 0 8px 24px rgb(2 6 23 / 0.35);
+  --sb-shadow-lg: 0 18px 44px rgb(2 6 23 / 0.5);
+  --sb-tint-1: rgb(249 115 22 / 0.18);
+  --sb-tint-1-fg: #ffc59a;
+  --sb-tint-2: rgb(56 189 248 / 0.16);
+  --sb-tint-2-fg: #7ff0ff;
+  --sb-tint-3: rgb(74 222 128 / 0.16);
+  --sb-tint-3-fg: #8af5b5;
+  --sb-tint-4: rgb(167 139 250 / 0.2);
+  --sb-tint-4-fg: #d4c8ff;
+  --sb-tint-5: rgb(148 163 184 / 0.2);
+  --sb-tint-5-fg: #e2e8f0;
+  color-scheme: dark;
+}
+
+/* Quien pide menos transparencias (iOS/macOS "Reducir transparencia") ve
+   superficies sólidas: mismo diseño, sin vidrio. */
+@media (prefers-reduced-transparency: reduce) {
+  :root:not([data-contrast="high"]):not([data-mode="silent"]) {
+    --sb-surface: #14307a;
+    --sb-surface-2: #1a3a8c;
+    --sb-blur: none;
+  }
 }
 
 :root[data-contrast="high"] {
@@ -89,11 +109,10 @@
   --sb-focus: #ffd400;
   --sb-focus-ring: #000000;
   --sb-mark: #ffd400;
-  --sb-hero-from: #000000;
-  --sb-hero-to: #000000;
-  --sb-hero-fg: #ffffff;
-  --sb-hero-muted: #ffffff;
-  --sb-hero-glow: transparent;
+  --sb-bg-image: none;
+  --sb-glass-border: #ffffff;
+  --sb-glass-shine: transparent;
+  --sb-blur: none;
   --sb-shadow: none;
   --sb-shadow-lg: none;
   --sb-tint-1: #000000;
@@ -131,11 +150,10 @@
   --sb-focus: #c9d1d9;
   --sb-focus-ring: #0d1117;
   --sb-mark: #97a3b1;
-  --sb-hero-from: #161b22;
-  --sb-hero-to: #161b22;
-  --sb-hero-fg: #e6ebf1;
-  --sb-hero-muted: #a9b4c2;
-  --sb-hero-glow: transparent;
+  --sb-bg-image: none;
+  --sb-glass-border: #2a313b;
+  --sb-glass-shine: transparent;
+  --sb-blur: none;
   --sb-shadow: none;
   --sb-shadow-lg: none;
   --sb-tint-1: #1f2630;
@@ -170,8 +188,7 @@
   --color-success-soft: var(--sb-success-soft);
   --color-warning-soft: var(--sb-warning-soft);
   --color-mark: var(--sb-mark);
-  --color-hero-fg: var(--sb-hero-fg);
-  --color-hero-muted: var(--sb-hero-muted);
+  --color-glass: var(--sb-glass-border);
   --shadow-card: var(--sb-shadow);
   --shadow-float: var(--sb-shadow-lg);
 }
@@ -192,11 +209,24 @@
     text-size-adjust: 100%;
     background: var(--sb-bg);
     -webkit-tap-highlight-color: transparent;
+    /* La barra superior y la navegación inferior son fijas: al enfocar o
+       desplazar hacia un control, nunca queda tapado (WCAG 2.4.11). */
+    scroll-padding-top: 5rem;
+    scroll-padding-bottom: 7rem;
   }
 
   body {
     @apply bg-bg font-sans text-fg antialiased;
     min-height: 100dvh;
+  }
+  /* Fondo fijo (también en iOS, que ignora background-attachment: fixed). */
+  body::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    z-index: -1;
+    background: var(--sb-bg-image), var(--sb-bg);
+    pointer-events: none;
   }
 
   /* Foco siempre visible, con doble anillo para cualquier fondo. */
@@ -229,32 +259,53 @@
 }
 
 @layer components {
-  /* Tarjeta base. */
-  .sb-card {
-    background: var(--sb-surface);
+  /* Tarjeta base: vidrio translúcido sobre el fondo azul rey. */
+  .sb-card,
+  .sb-glass {
+    background: linear-gradient(150deg, var(--sb-glass-shine), transparent 55%), var(--sb-surface);
     border: 1px solid var(--sb-border-soft);
     border-radius: var(--radius-card);
     box-shadow: var(--sb-shadow);
+    -webkit-backdrop-filter: var(--sb-blur);
+    backdrop-filter: var(--sb-blur);
+  }
+  /* Vidrio con borde luminoso (mosaicos de canal, como en la campaña). */
+  .sb-glass {
+    border-color: var(--sb-glass-border);
+  }
+  :root[data-contrast="high"] :is(.sb-card, .sb-glass) {
+    border-width: 2px;
   }
 
-  /* Encabezado destacado (héroe) con degradado institucional. */
-  .sb-hero {
-    position: relative;
-    overflow: hidden;
-    color: var(--sb-hero-fg);
-    background: linear-gradient(135deg, var(--sb-hero-from) 0%, var(--sb-hero-to) 100%);
-    border-radius: 1.75rem;
-    isolation: isolate;
+  /* Botón principal naranja (texto azul marino: blanco sobre naranja no
+     alcanza el contraste mínimo, 2.7:1). */
+  .sb-cta {
+    @apply flex min-h-[3.75rem] w-full items-center justify-center gap-3 rounded-full px-6 font-display text-xl font-black uppercase tracking-wide text-on-accent;
+    background: linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--sb-accent) 85%, white),
+      var(--sb-accent)
+    );
+    box-shadow:
+      0 10px 28px color-mix(in srgb, var(--sb-accent) 40%, transparent),
+      inset 0 1px 0 rgb(255 255 255 / 0.35);
   }
-  .sb-hero::after {
-    content: "";
-    position: absolute;
-    inset: auto -20% -55% auto;
-    width: 70%;
-    aspect-ratio: 1;
-    border-radius: 9999px;
-    background: radial-gradient(circle, var(--sb-hero-glow) 0%, transparent 65%);
-    z-index: -1;
+  :root[data-contrast="high"] .sb-cta,
+  :root[data-mode="silent"] .sb-cta {
+    background: var(--sb-accent);
+    box-shadow: none;
+  }
+
+  /* Barra de navegación inferior. */
+  .sb-nav {
+    background: color-mix(in srgb, var(--sb-bg) 78%, transparent);
+    border-top: 1px solid var(--sb-border-soft);
+    -webkit-backdrop-filter: var(--sb-blur);
+    backdrop-filter: var(--sb-blur);
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+  .sb-nav-space {
+    padding-bottom: calc(6.5rem + env(safe-area-inset-bottom));
   }
 
   /* Mosaicos de color por canal. */
@@ -366,11 +417,6 @@
     outline: none;
     box-shadow: none;
   }
-  :root[data-contrast="high"] .sb-hero {
-    outline: 2px solid var(--sb-fg);
-    outline-offset: -2px;
-  }
-
   /* Opción seleccionable con aspecto de tarjeta (radio dentro de label). */
   .sb-option {
     @apply flex min-h-touch cursor-pointer items-center gap-3 rounded-2xl border-2 border-line-soft bg-surface px-4 py-3 transition-colors;

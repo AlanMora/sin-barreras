@@ -3,10 +3,10 @@ import {
   HandHelping,
   Languages,
   MessageSquareText,
-  Phone,
+  MicOff,
   ShieldCheck,
   Video,
-  VolumeX,
+  Volume2,
 } from 'lucide-preact';
 import type { ComponentChildren } from 'preact';
 import { useEffect } from 'preact/hooks';
@@ -14,27 +14,35 @@ import { FallbackContact } from '../components/FallbackContact';
 import { IncidentStatus } from '../components/IncidentStatus';
 import { PageTitle } from '../components/ui';
 import { type MessageKey, t } from '../i18n';
+import type { Channel } from '../protocol/generated';
 import { clientEvent } from '../services';
 import { connectionStatus, helpRequested } from '../state/conversation';
 
 interface Option {
   href: string;
-  key: 'lsm_video' | 'text_chat' | 'audio' | 'translation' | 'silent';
+  key: Channel;
   icon: ComponentChildren;
-  /** Mosaico de color del canal (`.sb-tint-N` en styles.css). */
-  tint: string;
 }
 
 const OPTIONS: Option[] = [
-  { href: '/llamada?m=video', key: 'lsm_video', icon: <Video size={28} />, tint: 'sb-tint-1' },
-  { href: '/chat', key: 'text_chat', icon: <MessageSquareText size={28} />, tint: 'sb-tint-2' },
-  { href: '/llamada?m=audio', key: 'audio', icon: <Phone size={28} />, tint: 'sb-tint-3' },
-  { href: '/idioma', key: 'translation', icon: <Languages size={28} />, tint: 'sb-tint-4' },
-  { href: '/silencioso', key: 'silent', icon: <VolumeX size={28} />, tint: 'sb-tint-5' },
+  { href: '/llamada?m=video', key: 'lsm_video', icon: <Video size={26} /> },
+  { href: '/chat', key: 'text_chat', icon: <MessageSquareText size={26} /> },
+  { href: '/llamada?m=audio', key: 'audio', icon: <Volume2 size={26} /> },
+  { href: '/idioma', key: 'translation', icon: <Languages size={26} /> },
+  { href: '/silencioso', key: 'silent', icon: <MicOff size={26} /> },
 ];
 
-/** Indicador breve de la conexión dentro del encabezado (no es región viva:
- *  los cambios ya los anuncia el aviso de conexión). */
+/** Pantalla de la conversación activa, para volver a ella desde el inicio. */
+const CONVERSATION: Record<Channel, string> = {
+  lsm_video: '/llamada?m=video',
+  audio: '/llamada?m=audio',
+  text_chat: '/chat',
+  translation: '/chat',
+  silent: '/silencioso',
+};
+
+/** Indicador breve de la conexión (no es región viva: los cambios ya los
+ *  anuncia el aviso de conexión). */
 function StatusChip() {
   const status = connectionStatus.value;
   const online = status === 'online';
@@ -45,10 +53,10 @@ function StatusChip() {
       ? t('home.status.offline')
       : t('home.status.connecting');
   return (
-    <p class="inline-flex items-center gap-2 self-start rounded-full bg-white/10 px-3 py-1.5 text-sm font-bold text-hero-fg ring-1 ring-white/20">
+    <p class="inline-flex items-center gap-2 rounded-full border border-glass bg-surface px-3 py-1.5 text-sm font-bold">
       <span
         aria-hidden="true"
-        class={`relative block h-2.5 w-2.5 rounded-full ${online ? 'bg-[#4ade80]' : offline ? 'bg-[#fca5a5]' : 'sb-pulse bg-accent'}`}
+        class={`block h-2.5 w-2.5 rounded-full ${online ? 'bg-success' : offline ? 'bg-danger' : 'sb-pulse bg-accent'}`}
       />
       {label}
     </p>
@@ -61,96 +69,105 @@ export function Home() {
     clientEvent('privacy_notice_shown');
     clientEvent('channel_screen_shown');
   }, []);
+  const active = helpRequested.value;
   return (
     <>
-      <div class="sb-hero flex flex-col gap-3 px-5 pb-6 pt-5 shadow-float">
-        <p class="text-sm font-extrabold uppercase tracking-wider text-hero-muted">
-          {t('home.eyebrow')}
-        </p>
-        <div class="text-hero-fg [&_h1]:text-hero-fg">
-          <PageTitle documentTitle={`${t('app.name')} · ${t('home.title')}`}>
-            {t('home.title')}
-          </PageTitle>
-        </div>
-        <p class="text-lg text-hero-muted">{t('home.subtitle')}</p>
+      <div class="flex flex-col items-center gap-3 pt-1 text-center">
+        <PageTitle documentTitle={`${t('app.name')} · ${t('home.title')}`}>
+          {t('home.title')}
+        </PageTitle>
+        <p class="max-w-md text-base text-muted sm:text-lg">{t('home.subtitle')}</p>
         <StatusChip />
       </div>
 
-      {helpRequested.value ? <IncidentStatus /> : null}
+      {active ? (
+        <div class="flex flex-col gap-3">
+          <IncidentStatus />
+          <a href={CONVERSATION[active]} class="sb-cta">
+            {t('home.cta_back')}
+            <ChevronRight size={28} strokeWidth={3} aria-hidden="true" />
+          </a>
+        </div>
+      ) : null}
 
-      <section aria-labelledby="channels-title" class="flex flex-col gap-3">
+      <section aria-labelledby="channels-title">
         <h2 id="channels-title" class="sr-only">
           {t('home.channels')}
         </h2>
-        <ul class="grid gap-3">
-          {OPTIONS.map((option, index) => (
-            <li key={option.key} class="sb-rise" data-i={index}>
+        {/* 2 columnas en pantallas normales; 1 sola con letra grande. */}
+        <ul class="grid grid-cols-[repeat(auto-fit,minmax(9.5rem,1fr))] gap-3">
+          {OPTIONS.map((option) => (
+            <li
+              key={option.key}
+              class={`sb-rise ${option.key === 'silent' ? 'col-span-full' : ''}`}
+            >
               <a
                 href={option.href}
-                class="group flex min-h-[5.5rem] items-center gap-4 rounded-card border-2 border-line-soft bg-surface p-4 shadow-card transition-[border-color,transform,box-shadow] hover:-translate-y-0.5 hover:border-line hover:shadow-float active:translate-y-0"
+                class="sb-glass group flex h-full min-h-[8rem] flex-col items-center justify-center gap-2 px-3 py-4 text-center transition-[transform,border-color] hover:-translate-y-0.5 hover:border-line active:translate-y-0"
               >
                 <span
                   aria-hidden="true"
-                  class={`grid h-14 w-14 shrink-0 place-items-center rounded-2xl ${option.tint}`}
+                  class="grid h-12 w-12 place-items-center rounded-2xl sb-tint-2 transition-transform group-hover:scale-105"
                 >
                   {option.icon}
                 </span>
-                <span class="min-w-0 flex-1">
-                  <span class="block font-display text-xl font-extrabold leading-snug">
+                <span>
+                  <span class="block font-display text-[1.05rem] font-extrabold leading-tight">
                     {t(`channel.${option.key}.title` as MessageKey)}
                   </span>
-                  <span class="mt-0.5 block text-base leading-snug text-muted">
+                  <span class="mt-1 block text-sm leading-snug text-muted">
                     {t(`channel.${option.key}.desc` as MessageKey)}
                   </span>
                 </span>
-                <ChevronRight
-                  size={24}
-                  aria-hidden="true"
-                  class="shrink-0 text-muted transition-transform group-hover:translate-x-1"
-                />
               </a>
             </li>
           ))}
         </ul>
       </section>
 
+      {active ? null : (
+        <div class="flex flex-col items-center gap-2">
+          <p class="text-center text-muted">{t('home.cta_hint')}</p>
+          <a href="/chat" class="sb-cta">
+            {t('home.cta')}
+            <ChevronRight size={28} strokeWidth={3} aria-hidden="true" />
+          </a>
+        </div>
+      )}
+
       {/* Aviso de privacidad: visible, breve y NUNCA bloquea pedir ayuda. */}
-      <section
-        aria-labelledby="privacy-short"
-        class="flex items-start gap-3 rounded-card bg-surface-2 p-4 text-sm"
-      >
+      <section aria-labelledby="privacy-short" class="sb-card flex items-start gap-3 p-4">
         <span
           aria-hidden="true"
-          class="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-surface text-fg"
+          class="grid h-10 w-10 shrink-0 place-items-center rounded-xl sb-tint-3"
         >
           <ShieldCheck size={20} />
         </span>
         <div class="min-w-0">
-          <p id="privacy-short" class="text-base text-fg">
+          <p id="privacy-short" class="text-base">
             {t('privacy.short')}
           </p>
           <a
             href="/aviso-de-privacidad"
-            class="inline-flex min-h-touch items-center font-bold text-fg underline decoration-2 underline-offset-4"
+            class="inline-flex min-h-touch items-center font-bold text-accent-text underline decoration-2 underline-offset-4"
           >
             {t('privacy.link')}
           </a>
         </div>
       </section>
 
-      <section
-        aria-labelledby="fallback-title"
-        class="rounded-card border-2 border-dashed border-line p-4"
-      >
+      <section aria-labelledby="fallback-title" class="sb-card p-4">
         <h2
           id="fallback-title"
           class="mb-1 flex items-center gap-2 font-display text-lg font-extrabold"
         >
-          <HandHelping size={22} aria-hidden="true" />
+          <HandHelping size={22} aria-hidden="true" class="text-accent-text" />
           {t('fallback.title')}
         </h2>
         <FallbackContact compact />
       </section>
+
+      <p class="text-center text-sm text-muted">{t('app.program')}</p>
     </>
   );
 }

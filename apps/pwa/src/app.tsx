@@ -15,8 +15,8 @@ function Shell() {
   // La pantalla neutral no muestra nada del programa.
   return (
     <Layout
+      path={path}
       minimal={path === '/clima'}
-      home={path === '/'}
       conversation={path === '/chat' || path === '/silencioso' || path === '/llamada'}
     >
       <Router>

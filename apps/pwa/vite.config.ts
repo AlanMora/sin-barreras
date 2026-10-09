@@ -34,8 +34,8 @@ export default defineConfig({
         lang: 'es-MX',
         start_url: '/',
         display: 'standalone',
-        background_color: '#ffffff',
-        theme_color: '#0b2545',
+        background_color: '#0a2060',
+        theme_color: '#0a2060',
         icons: [],
       },
       workbox: {

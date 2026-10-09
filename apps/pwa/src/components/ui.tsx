@@ -37,7 +37,7 @@ export function PageTitle({
     <h1
       ref={ref}
       tabIndex={-1}
-      class="font-display text-[1.75rem] font-black leading-tight tracking-tight text-fg outline-none sm:text-4xl"
+      class="font-display text-[1.65rem] font-black leading-tight tracking-tight text-fg outline-none sm:text-4xl"
     >
       {children}
     </h1>
@@ -101,20 +101,30 @@ export function Notice({
   );
 }
 
-/** Logotipo: cruz naranja (ayuda) sobre azul marino. Decorativo. */
-export function BrandMark({ size = 'md' }: { size?: 'sm' | 'md' | 'lg' }) {
-  const box =
-    size === 'lg'
-      ? 'h-14 w-14 rounded-2xl'
-      : size === 'sm'
-        ? 'h-9 w-9 rounded-xl'
-        : 'h-11 w-11 rounded-xl';
-  const bar = size === 'lg' ? 'h-7 w-2' : size === 'sm' ? 'h-4 w-1.5' : 'h-5 w-1.5';
-  const cross = size === 'lg' ? 'h-2 w-7' : size === 'sm' ? 'h-1.5 w-4' : 'h-1.5 w-5';
+/**
+ * Logotipo de la campaña: "SIN BARRERAS" en naranja con un trazo curvo.
+ * El texto es real (lo leen los lectores de pantalla como "Sin Barreras").
+ */
+export function Wordmark({ size = 'md' }: { size?: 'md' | 'lg' }) {
+  const text = size === 'lg' ? 'text-4xl' : 'text-[1.35rem]';
   return (
-    <span aria-hidden="true" class={`relative grid shrink-0 place-items-center bg-primary ${box}`}>
-      <span class={`block rounded-full bg-mark ${bar}`} />
-      <span class={`absolute block rounded-full bg-mark ${cross}`} />
+    <span
+      class={`relative inline-flex flex-col font-display font-black uppercase leading-[0.9] tracking-tight text-mark ${text}`}
+    >
+      <span>Sin</span> <span>Barreras</span>
+      <svg
+        aria-hidden="true"
+        viewBox="0 0 120 16"
+        class="absolute -bottom-2 left-[38%] h-[0.55em] w-[70%] text-mark"
+        fill="none"
+      >
+        <path
+          d="M2 12 C 40 16, 80 12, 116 2"
+          stroke="currentColor"
+          stroke-width="5"
+          stroke-linecap="round"
+        />
+      </svg>
     </span>
   );
 }
