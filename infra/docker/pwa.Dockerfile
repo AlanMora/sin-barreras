@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1.7
 # PWA ciudadana: build con Node y servida por Nginx sin privilegios.
 
-FROM node:24-alpine AS build
+FROM node:25-alpine AS build
 WORKDIR /src
 RUN corepack enable
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
