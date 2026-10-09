@@ -76,12 +76,15 @@ export function Home() {
         class="flex items-start gap-3 rounded-card bg-surface p-4 text-sm"
       >
         <ShieldCheck size={20} class="mt-0.5 shrink-0" />
-        <p id="privacy-short">
-          {t('privacy.short')}{' '}
-          <a href="/aviso-de-privacidad" class="font-bold underline">
+        <div>
+          <p id="privacy-short">{t('privacy.short')}</p>
+          <a
+            href="/aviso-de-privacidad"
+            class="inline-flex min-h-touch items-center font-bold underline"
+          >
             {t('privacy.link')}
           </a>
-        </p>
+        </div>
       </section>
 
       <section

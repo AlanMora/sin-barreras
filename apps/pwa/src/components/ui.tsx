@@ -8,8 +8,15 @@ export function SrOnly({ children }: { children: ComponentChildren }) {
 }
 
 /**
- * Título de página: recibe el foco al montarse para que el lector de pantalla
- * anuncie la pantalla nueva, y actualiza el título del documento.
+ * Última ruta en la que se movió el foco. En la carga inicial es `null`: no se
+ * mueve el foco (el lector de pantalla empieza arriba y el primer Tab llega a
+ * "Saltar al contenido"). Solo se mueve cuando cambia la ruta.
+ */
+let lastPath: string | null = null;
+
+/**
+ * Título de página: al NAVEGAR a otra pantalla recibe el foco para que el
+ * lector de pantalla la anuncie, y actualiza el título del documento.
  */
 export function PageTitle({
   children,
@@ -21,7 +28,10 @@ export function PageTitle({
   const ref = useRef<HTMLHeadingElement>(null);
   useEffect(() => {
     document.title = documentTitle;
-    ref.current?.focus({ preventScroll: false });
+    const path = location.pathname + location.search;
+    const navigated = lastPath !== null && lastPath !== path;
+    lastPath = path;
+    if (navigated) ref.current?.focus({ preventScroll: false });
   }, [documentTitle]);
   return (
     <h1

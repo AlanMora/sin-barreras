@@ -9,6 +9,7 @@ import {
   ConnectionClient,
   type OutgoingCommand,
 } from './connection/client';
+import { transportFactory } from './connection/http-socket';
 import { createOutboxStore, sessionStore } from './connection/storage';
 import { locale, t } from './i18n';
 import { captureEntry } from './lib/entry';
@@ -62,6 +63,8 @@ export async function startServices(): Promise<void> {
   const store = await createOutboxStore();
   client = new ConnectionClient({
     url: wsUrl(),
+    // WebSocket mientras funcione; si la red lo bloquea, HTTP (ADR-0018).
+    createSocket: transportFactory(wsUrl(), import.meta.env.VITE_API_URL ?? ''),
     hello: () => ({
       appVersion: __APP_VERSION__,
       language: locale.value,
@@ -99,8 +102,25 @@ export async function startServices(): Promise<void> {
   window.addEventListener('online', wake);
   window.addEventListener('offline', () => client?.wentOffline());
 
+  await client.load();
+  // Mensajes que quedaron en cola (p. ej. se recargó sin conexión): se vuelven
+  // a mostrar como "en cola" para que nadie crea que se perdieron.
+  for (const message of client.pending()) {
+    if (message.type === 'chat_message') {
+      helpRequested.value ??= message.kind === 'quick_reply' ? 'silent' : 'text_chat';
+      addLocalMessage({
+        key: message.client_msg_id,
+        author: 'citizen',
+        kind: message.kind,
+        text: message.text,
+        ...(message.quick_reply ? { quickReply: message.quick_reply } : {}),
+        clientMsgId: message.client_msg_id,
+        status: 'queued',
+      });
+    }
+  }
   for (const { command, id } of early.splice(0)) client.send(command, id);
-  await client.start();
+  client.connectNow();
   clientEvent('app_opened', entry ? `qr:${entry.point_id}` : 'web');
 }
 

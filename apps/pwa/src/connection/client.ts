@@ -123,8 +123,13 @@ export class ConnectionClient {
     return this.outbox.has(clientMsgId);
   }
 
-  /** Carga la cola persistida y conecta. */
-  async start(): Promise<void> {
+  /** Comandos aún sin `ack`, en orden (p. ej. para mostrarlos tras recargar). */
+  pending(): ClientMessage[] {
+    return [...this.outbox.values()].sort((a, b) => a.order - b.order).map((q) => q.message);
+  }
+
+  /** Carga la cola persistida (sin conectar). */
+  async load(): Promise<void> {
     try {
       for (const queued of await this.deps.store.load()) {
         this.outbox.set(queued.message.client_msg_id, queued);
@@ -133,6 +138,16 @@ export class ConnectionClient {
     } catch {
       // Sin almacenamiento: se continúa solo con memoria.
     }
+  }
+
+  /** Carga la cola persistida y conecta. */
+  async start(): Promise<void> {
+    await this.load();
+    this.connect();
+  }
+
+  /** Conecta (si ya se cargó la cola con `load`). */
+  connectNow(): void {
     this.connect();
   }
 
