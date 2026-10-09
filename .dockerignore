@@ -1,0 +1,9 @@
+.git
+**/node_modules
+**/dist
+**/dev-dist
+target
+infra/dev
+**/*.tsbuildinfo
+playwright-report
+test-results

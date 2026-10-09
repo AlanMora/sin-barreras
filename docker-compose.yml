@@ -1,0 +1,145 @@
+# Entorno LOCAL de desarrollo.
+#
+#   make bootstrap              # una vez: certificados TLS y secretos de desarrollo
+#   docker compose up -d        # solo infraestructura (Valkey + Postgres)
+#   docker compose --profile apps up -d --build   # todo el sistema en contenedores
+#
+# El despliegue real usa infra/swarm/docker-stack.yml (Fase 8).
+
+name: sin-barreras
+
+x-hardening: &hardening
+  security_opt: ["no-new-privileges:true"]
+  restart: unless-stopped
+
+# Servicios de datos: arrancan como root solo para copiar el material TLS con
+# el dueño correcto; después el entrypoint oficial baja a su usuario.
+x-datastore-caps: &datastore-caps
+  cap_drop: [ALL]
+  cap_add: [CHOWN, DAC_OVERRIDE, FOWNER, SETUID, SETGID]
+
+x-rust-service: &rust-service
+  <<: *hardening
+  profiles: [apps]
+  read_only: true
+  cap_drop: [ALL]
+  user: "65532:65532"
+
+services:
+  valkey:
+    image: valkey/valkey:9.1-alpine
+    <<: [*hardening, *datastore-caps]
+    entrypoint: ["/bin/sh", "/usr/local/bin/sb-start.sh"]
+    volumes:
+      - valkey-data:/data
+      - ./infra/valkey/valkey.conf:/usr/local/etc/valkey/valkey.conf:ro
+      - ./infra/valkey/start.sh:/usr/local/bin/sb-start.sh:ro
+      - ./infra/dev/certs/ca.crt:/run/tls-src/ca.crt:ro
+      - ./infra/dev/certs/valkey.crt:/run/tls-src/valkey.crt:ro
+      - ./infra/dev/certs/valkey.key:/run/tls-src/valkey.key:ro
+    secrets: [valkey_users_acl, valkey_healthcheck_password]
+    ports: ["127.0.0.1:${SB_VALKEY_PORT:-16379}:6379"]
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          VALKEYCLI_AUTH="$$(cat /run/secrets/valkey_healthcheck_password)"
+          valkey-cli --tls --cacert /tls/ca.crt --user healthcheck ping | grep -q PONG
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  postgres:
+    image: postgres:18-alpine
+    <<: [*hardening, *datastore-caps]
+    entrypoint: ["/bin/sh", "/usr/local/bin/sb-start.sh"]
+    environment:
+      POSTGRES_DB: sin_barreras
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_superuser_password
+      # Locale provider `builtin` (Postgres 17+): orden de texto estable que no
+      # depende de glibc/musl, así una actualización del SO no corrompe índices.
+      POSTGRES_INITDB_ARGS: "--data-checksums --encoding=UTF8 --locale-provider=builtin --builtin-locale=C.UTF-8"
+    volumes:
+      - postgres-data:/var/lib/postgresql
+      - ./infra/postgres/postgresql.conf:/etc/postgresql/postgresql.conf:ro
+      - ./infra/postgres/pg_hba.conf:/etc/postgresql/pg_hba.conf:ro
+      - ./infra/postgres/pg_ident.conf:/etc/postgresql/pg_ident.conf:ro
+      - ./infra/postgres/start.sh:/usr/local/bin/sb-start.sh:ro
+      - ./infra/dev/certs/ca.crt:/run/tls-src/ca.crt:ro
+      - ./infra/dev/certs/postgres.crt:/run/tls-src/postgres.crt:ro
+      - ./infra/dev/certs/postgres.key:/run/tls-src/postgres.key:ro
+    secrets: [postgres_superuser_password]
+    shm_size: 256mb
+    ports: ["127.0.0.1:${SB_POSTGRES_PORT:-15432}:5432"]
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "postgres", "-d", "sin_barreras"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  bff:
+    <<: *rust-service
+    build:
+      context: .
+      dockerfile: infra/docker/rust.Dockerfile
+      args: { APP: bff }
+    image: sin-barreras/bff:dev
+    environment:
+      BFF_LISTEN_ADDR: 0.0.0.0:8080
+      LOG_FORMAT: pretty
+    ports: ["127.0.0.1:${SB_BFF_PORT:-8080}:8080"]
+    depends_on:
+      valkey: { condition: service_healthy }
+      c5-mock: { condition: service_healthy }
+
+  record-writer:
+    <<: *rust-service
+    build:
+      context: .
+      dockerfile: infra/docker/rust.Dockerfile
+      args: { APP: record-writer }
+    image: sin-barreras/record-writer:dev
+    environment:
+      RECORD_WRITER_LISTEN_ADDR: 0.0.0.0:8081
+      LOG_FORMAT: pretty
+    ports: ["127.0.0.1:${SB_RECORD_WRITER_PORT:-8081}:8081"]
+    depends_on:
+      valkey: { condition: service_healthy }
+      postgres: { condition: service_healthy }
+
+  c5-mock:
+    <<: *rust-service
+    build:
+      context: .
+      dockerfile: infra/docker/rust.Dockerfile
+      args: { APP: c5-mock }
+    image: sin-barreras/c5-mock:dev
+    environment:
+      C5_MOCK_LISTEN_ADDR: 0.0.0.0:8090
+      LOG_FORMAT: pretty
+    ports: ["127.0.0.1:${SB_C5_MOCK_PORT:-8090}:8090"]
+
+  pwa:
+    <<: *hardening
+    profiles: [apps]
+    build:
+      context: .
+      dockerfile: infra/docker/pwa.Dockerfile
+    image: sin-barreras/pwa:dev
+    read_only: true
+    tmpfs: ["/tmp"]
+    cap_drop: [ALL]
+    ports: ["127.0.0.1:${SB_PWA_PORT:-8000}:8080"]
+
+secrets:
+  valkey_users_acl:
+    file: ./infra/dev/secrets/valkey-users.acl
+  valkey_healthcheck_password:
+    file: ./infra/dev/secrets/valkey_healthcheck_password
+  postgres_superuser_password:
+    file: ./infra/dev/secrets/postgres_superuser_password
+
+volumes:
+  valkey-data:
+  postgres-data:
