@@ -1,0 +1,22 @@
+[package]
+name = "bff"
+version = "0.1.0"
+description = "Backend For Frontend: única puerta pública entre la PWA y el C5."
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+axum.workspace = true
+service-kit.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
+tower = { workspace = true, features = ["util"] }
+
+[lints]
+workspace = true

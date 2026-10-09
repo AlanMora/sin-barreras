@@ -1,0 +1,22 @@
+[package]
+name = "c5-mock"
+version = "0.1.0"
+description = "Simulador del C5 para desarrollo. NO representa la API real del C5."
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+axum.workspace = true
+service-kit.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
+tower = { workspace = true, features = ["util"] }
+
+[lints]
+workspace = true
