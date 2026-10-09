@@ -10,13 +10,22 @@ publish.workspace = true
 [dependencies]
 anyhow.workspace = true
 axum.workspace = true
+events.workspace = true
+fred.workspace = true
+protocol.workspace = true
+registry.workspace = true
+serde_json.workspace = true
 service-kit.workspace = true
+sqlx.workspace = true
 tokio.workspace = true
 tracing.workspace = true
+valkey-client.workspace = true
 
 [dev-dependencies]
-serde_json.workspace = true
-tower = { workspace = true, features = ["util"] }
+base64.workspace = true
+registry = { workspace = true, features = ["test-support"] }
+testcontainers-modules.workspace = true
+uuid.workspace = true
 
 [lints]
 workspace = true
