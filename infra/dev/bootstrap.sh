@@ -4,9 +4,11 @@
 # - Una CA de desarrollo propia y certificados de servidor para Valkey y Postgres.
 # - Contraseñas aleatorias por servicio y el archivo de ACL de Valkey con hashes
 #   SHA-256 (las contraseñas en claro nunca entran al archivo de ACL).
+# - Llaves de la aplicación (firma de QR, API key del simulador del C5…).
 #
-# Todo se escribe en infra/dev/certs y infra/dev/secrets, que están en
-# .gitignore. NUNCA uses estos archivos fuera de tu máquina.
+# Es idempotente: solo crea lo que falta. Con --force regenera todo.
+# Todo se escribe en infra/dev/certs y infra/dev/secrets (en .gitignore).
+# NUNCA uses estos archivos fuera de tu máquina.
 #
 # Uso: infra/dev/bootstrap.sh [--force]
 set -euo pipefail
@@ -18,50 +20,65 @@ secrets="$root/secrets"
 if [[ "${1:-}" == "--force" ]]; then
   rm -rf "$certs" "$secrets"
 fi
-if [[ -f "$certs/ca.crt" && -f "$secrets/valkey-users.acl" ]]; then
-  echo "✓ Certificados y secretos de desarrollo ya existen (usa --force para regenerarlos)."
-  exit 0
-fi
 umask 077
 mkdir -p "$certs" "$secrets"
 
-echo "→ CA de desarrollo"
-openssl ecparam -name prime256v1 -genkey -noout -out "$certs/ca.key"
-openssl req -x509 -new -key "$certs/ca.key" -sha256 -days 825 \
-  -subj "/O=Sin Barreras DEV/CN=Sin Barreras Dev CA" -out "$certs/ca.crt"
+# --- TLS ----------------------------------------------------------------
+if [[ ! -f "$certs/ca.crt" ]]; then
+  echo "→ CA de desarrollo"
+  openssl ecparam -name prime256v1 -genkey -noout -out "$certs/ca.key"
+  openssl req -x509 -new -key "$certs/ca.key" -sha256 -days 825 \
+    -subj "/O=Sin Barreras DEV/CN=Sin Barreras Dev CA" -out "$certs/ca.crt"
+  rm -f "$certs"/valkey.* "$certs"/postgres.*
+fi
 
 server_cert() { # nombre, SANs
   local name="$1" sans="$2"
+  [[ -f "$certs/$name.crt" ]] && return
   echo "→ Certificado de servidor: $name"
   openssl ecparam -name prime256v1 -genkey -noout -out "$certs/$name.key"
   openssl req -new -key "$certs/$name.key" -subj "/O=Sin Barreras DEV/CN=$name" -out "$certs/$name.csr"
   openssl x509 -req -in "$certs/$name.csr" -CA "$certs/ca.crt" -CAkey "$certs/ca.key" \
     -CAcreateserial -days 825 -sha256 -out "$certs/$name.crt" \
-    -extfile <(printf "subjectAltName=%s\nextendedKeyUsage=serverAuth\nkeyUsage=digitalSignature" "$sans")
-  rm "$certs/$name.csr"
+    -extfile <(printf "subjectAltName=%s\nextendedKeyUsage=serverAuth\nkeyUsage=digitalSignature" "$sans") 2>/dev/null
+  rm -f "$certs/$name.csr" "$certs/ca.srl"
 }
 server_cert valkey "DNS:valkey,DNS:localhost,IP:127.0.0.1"
-server_cert postgres "DNS:postgres,DNS:localhost,IP:127.0.0.1"
-rm -f "$certs/ca.srl"
+server_cert postgres "DNS:postgres,DNS:postgres-replica,DNS:localhost,IP:127.0.0.1"
 
-echo "→ Contraseñas de desarrollo"
-password() { openssl rand -hex 24; }
+# --- Secretos -------------------------------------------------------------
+new_secret() { # archivo, comando que imprime el valor
+  local file="$secrets/$1"
+  shift
+  [[ -f "$file" ]] && return
+  echo "→ Secreto: $(basename "$file")"
+  "$@" > "$file"
+}
+hex() { openssl rand -hex 24; }
+qr_keys() { printf '1:%s' "$(openssl rand -base64 32)"; }
+
 for user in admin bff record_writer healthcheck; do
-  password > "$secrets/valkey_${user}_password"
+  new_secret "valkey_${user}_password" hex
 done
-password > "$secrets/postgres_superuser_password"
+for role in superuser migrator record_writer reporting investigator; do
+  new_secret "postgres_${role}_password" hex
+done
+new_secret c5_mock_api_key hex
+new_secret qr_keys qr_keys
 
-echo "→ ACL de Valkey"
+# El ACL se regenera siempre a partir de las contraseñas (es derivado).
 hash() { printf '%s' "$(cat "$1")" | openssl dgst -sha256 -r | cut -d' ' -f1; }
-# Mínimo privilegio: el usuario `default` queda deshabilitado. Los permisos de
-# bff y record_writer se acotan por prefijo de llaves y se afinan en las
-# Fases 1 y 2, cuando existan los streams y llaves definitivas.
+# Mínimo privilegio: el usuario `default` queda deshabilitado.
+# - bff: solo llaves y canales `sb:*`, sin comandos peligrosos ni de administración
+#   (excepto INFO, de solo lectura, que el cliente usa para detectar la versión).
+# - record_writer: solo los streams del registro (`sb:rec*`), solo lectura de
+#   streams y consumer groups.
 cat > "$secrets/valkey-users.acl" <<ACL
 user default off
 user admin on #$(hash "$secrets/valkey_admin_password") ~* &* +@all
 user healthcheck on #$(hash "$secrets/valkey_healthcheck_password") resetkeys -@all +ping +hello
-user bff on #$(hash "$secrets/valkey_bff_password") ~sb:* &sb:* +@all -@dangerous -@admin
-user record_writer on #$(hash "$secrets/valkey_record_writer_password") ~sb:events* -@all +@stream +@connection +ping
+user bff on #$(hash "$secrets/valkey_bff_password") ~sb:* &sb:* +@all -@dangerous -@admin +info
+user record_writer on #$(hash "$secrets/valkey_record_writer_password") ~sb:rec* resetchannels -@all +@stream +@connection +ping +xinfo
 ACL
 
 # Permisos:
@@ -74,4 +91,4 @@ ACL
 chmod 700 "$certs" "$secrets"
 chmod 600 "$certs"/*.key
 chmod 644 "$certs"/*.crt "$secrets"/*
-echo "✓ Listo: $certs y $secrets"
+echo "✓ Certificados y secretos de desarrollo listos en infra/dev/"

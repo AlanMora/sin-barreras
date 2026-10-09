@@ -78,17 +78,66 @@ services:
       timeout: 3s
       retries: 10
 
+  # Borde: mismo ruteo que en producción. `/` → PWA, `/ws` → BFF (2 réplicas).
+  traefik:
+    image: traefik:v3.7
+    <<: *hardening
+    profiles: [apps]
+    command:
+      - --providers.docker=true
+      - --providers.docker.exposedbydefault=false
+      - --providers.docker.network=sin-barreras_default
+      - --entrypoints.web.address=:8000
+      - --ping=true
+      - --log.level=INFO
+      - --accesslog=true
+      - --accesslog.format=json
+      # POLÍTICA: los logs nunca contienen la IP del ciudadano.
+      - --accesslog.fields.names.ClientAddr=drop
+      - --accesslog.fields.names.ClientHost=drop
+      - --accesslog.fields.names.ClientPort=drop
+      - --accesslog.fields.names.ClientUsername=drop
+      - --accesslog.fields.headers.defaultmode=drop
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    ports: ["127.0.0.1:${SB_PORT:-8000}:8000"]
+    read_only: true
+    cap_drop: [ALL]
+    healthcheck:
+      test: ["CMD", "traefik", "healthcheck", "--ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
   bff:
     <<: *rust-service
     build:
       context: .
       dockerfile: infra/docker/rust.Dockerfile
-      args: { APP: bff }
+      target: bff
     image: sin-barreras/bff:dev
+    # Mínimo 2 réplicas: el BFF no guarda estado propio (todo vive en Valkey).
+    deploy:
+      replicas: 2
     environment:
       BFF_LISTEN_ADDR: 0.0.0.0:8080
       LOG_FORMAT: pretty
-    ports: ["127.0.0.1:${SB_BFF_PORT:-8080}:8080"]
+      VALKEY_URL: valkeys://valkey:6379
+      VALKEY_USERNAME: bff
+      VALKEY_PASSWORD_FILE: /run/secrets/valkey_bff_password
+      VALKEY_CA_FILE: /run/secrets/dev_ca
+      C5_MOCK_URL: http://c5-mock:8090
+      C5_MOCK_API_KEY_FILE: /run/secrets/c5_mock_api_key
+      QR_KEYS_FILE: /run/secrets/qr_keys
+      ALLOWED_ORIGINS: http://localhost:${SB_PORT:-8000},http://localhost:5173
+    secrets: [valkey_bff_password, dev_ca, c5_mock_api_key, qr_keys]
+    labels:
+      traefik.enable: "true"
+      traefik.http.routers.bff.rule: Path(`/ws`)
+      traefik.http.routers.bff.entrypoints: web
+      traefik.http.services.bff.loadbalancer.server.port: "8080"
+      traefik.http.services.bff.loadbalancer.healthcheck.path: /ready
+      traefik.http.services.bff.loadbalancer.healthcheck.interval: 5s
     depends_on:
       valkey: { condition: service_healthy }
       c5-mock: { condition: service_healthy }
@@ -98,12 +147,11 @@ services:
     build:
       context: .
       dockerfile: infra/docker/rust.Dockerfile
-      args: { APP: record-writer }
+      target: record-writer
     image: sin-barreras/record-writer:dev
     environment:
       RECORD_WRITER_LISTEN_ADDR: 0.0.0.0:8081
       LOG_FORMAT: pretty
-    ports: ["127.0.0.1:${SB_RECORD_WRITER_PORT:-8081}:8081"]
     depends_on:
       valkey: { condition: service_healthy }
       postgres: { condition: service_healthy }
@@ -113,11 +161,14 @@ services:
     build:
       context: .
       dockerfile: infra/docker/rust.Dockerfile
-      args: { APP: c5-mock }
+      target: c5-mock
     image: sin-barreras/c5-mock:dev
     environment:
       C5_MOCK_LISTEN_ADDR: 0.0.0.0:8090
+      C5_MOCK_API_KEY_FILE: /run/secrets/c5_mock_api_key
       LOG_FORMAT: pretty
+    secrets: [c5_mock_api_key]
+    # Expuesto solo en localhost para usar /mock-control en demos y pruebas.
     ports: ["127.0.0.1:${SB_C5_MOCK_PORT:-8090}:8090"]
 
   pwa:
@@ -130,9 +181,24 @@ services:
     read_only: true
     tmpfs: ["/tmp"]
     cap_drop: [ALL]
-    ports: ["127.0.0.1:${SB_PWA_PORT:-8000}:8080"]
+    labels:
+      traefik.enable: "true"
+      traefik.http.routers.pwa.rule: PathPrefix(`/`)
+      traefik.http.routers.pwa.entrypoints: web
+      traefik.http.routers.pwa.priority: "1"
+      traefik.http.services.pwa.loadbalancer.server.port: "8080"
 
 secrets:
+  dev_ca:
+    file: ./infra/dev/certs/ca.crt
+  valkey_bff_password:
+    file: ./infra/dev/secrets/valkey_bff_password
+  valkey_record_writer_password:
+    file: ./infra/dev/secrets/valkey_record_writer_password
+  c5_mock_api_key:
+    file: ./infra/dev/secrets/c5_mock_api_key
+  qr_keys:
+    file: ./infra/dev/secrets/qr_keys
   valkey_users_acl:
     file: ./infra/dev/secrets/valkey-users.acl
   valkey_healthcheck_password:
