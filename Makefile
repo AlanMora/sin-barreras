@@ -1,7 +1,7 @@
 # Atajos para el trabajo diario. Cada objetivo solo encadena comandos
 # estándar (cargo, pnpm, docker compose); no esconde lógica.
 
-.PHONY: help bootstrap up up-apps down logs check test lint build fmt smoke protocol verify dlq
+.PHONY: help bootstrap up up-apps down logs check test lint build fmt smoke e2e protocol verify dlq
 
 help: ## Muestra esta ayuda
 	@grep -E '^[a-z-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-12s %s\n", $$1, $$2}'
@@ -41,6 +41,9 @@ build: ## Build de Rust y de la PWA (verifica el presupuesto)
 
 smoke: ## Prueba de punta a punta contra el sistema levantado (make up-apps)
 	node scripts/smoke-ws.mjs
+
+e2e: ## Pruebas E2E con Playwright y axe contra el sistema levantado (make up-apps)
+	cd apps/pwa && pnpm exec playwright test
 
 verify: ## Verifica la integridad del registro completo (rol auditor)
 	docker compose run --rm admin verify

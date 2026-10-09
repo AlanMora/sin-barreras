@@ -144,7 +144,7 @@ services:
     secrets: [valkey_bff_password, dev_ca, c5_mock_api_key, qr_keys, record_public_key, record_operational_keys]
     labels:
       traefik.enable: "true"
-      traefik.http.routers.bff.rule: Path(`/ws`)
+      traefik.http.routers.bff.rule: Path(`/ws`) || PathPrefix(`/api/`)
       traefik.http.routers.bff.entrypoints: web
       traefik.http.services.bff.loadbalancer.server.port: "8080"
       traefik.http.services.bff.loadbalancer.healthcheck.path: /ready
