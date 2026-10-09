@@ -1,0 +1,19 @@
+[package]
+name = "protocol"
+version = "0.1.0"
+description = "Contrato de mensajes WebSocket entre la PWA y el BFF (fuente de verdad; genera los tipos TypeScript)."
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+time.workspace = true
+ts-rs.workspace = true
+uuid.workspace = true
+
+[lints]
+workspace = true
