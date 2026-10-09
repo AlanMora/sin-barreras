@@ -14,12 +14,15 @@ crypto.workspace = true
 events.workspace = true
 fred.workspace = true
 getrandom.workspace = true
+protocol.workspace = true
 registry.workspace = true
 serde_json.workspace = true
 service-kit.workspace = true
 sqlx.workspace = true
 tokio.workspace = true
+time.workspace = true
 tracing.workspace = true
+uuid.workspace = true
 valkey-client.workspace = true
 
 [lints]

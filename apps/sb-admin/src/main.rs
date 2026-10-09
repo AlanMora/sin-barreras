@@ -7,6 +7,8 @@
 //!                                   Verifica la integridad (rol sb_auditor)
 //! sb-admin dlq list                 Lista la cola de errores del registro
 //! sb-admin dlq replay <ID|--all>    Reinyecta eventos de la cola de errores
+//! sb-admin investigate (--session ID | --c5 ID) --requested-by "Nombre" --reason "Folio" [--json]
+//!                                   Consulta auditada y descifrada (rol sb_investigator)
 //! ```
 //!
 //! La conexión se configura con las mismas variables que los servicios
@@ -22,7 +24,9 @@ use fred::interfaces::StreamsInterface;
 use registry::db::{DbConfig, MIGRATOR, migrator_config};
 use valkey_client::ValkeyConfig;
 
-const USAGE: &str = "uso: sb-admin <keygen ID | migrate | verify [--session ID] [--json] | dlq list | dlq replay <ID|--all>>";
+mod investigate;
+
+const USAGE: &str = "uso: sb-admin <keygen ID | migrate | verify [--session ID] [--json] | dlq list | dlq replay <ID|--all> | investigate (--session ID | --c5 ID) --requested-by NOMBRE --reason FOLIO [--json]>";
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -34,6 +38,7 @@ async fn main() -> anyhow::Result<()> {
         ["verify", rest @ ..] => verify(rest).await,
         ["dlq", "list"] => dlq_list().await,
         ["dlq", "replay", target] => dlq_replay(target).await,
+        ["investigate", rest @ ..] => investigate::run(investigate::parse(rest)?).await,
         _ => bail!(USAGE),
     }
 }
