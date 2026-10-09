@@ -23,11 +23,14 @@ test('la app funciona completa sin ninguna violación de CSP', async ({ page }) 
   await page.addInitScript(() => {
     document.addEventListener('securitypolicyviolation', (e) => {
       (window as unknown as { __csp: string[] }).__csp ??= [];
-      (window as unknown as { __csp: string[] }).__csp.push(`${e.violatedDirective} ${e.blockedURI}`);
+      (window as unknown as { __csp: string[] }).__csp.push(
+        `${e.violatedDirective} ${e.blockedURI}`,
+      );
     });
   });
   page.on('console', (m) => {
-    if (m.type() === 'error' && /Content Security Policy/i.test(m.text())) violations.push(m.text());
+    if (m.type() === 'error' && /Content Security Policy/i.test(m.text()))
+      violations.push(m.text());
   });
   await page.goto('/');
   await page.getByRole('link', { name: /Chat de texto/ }).click();
@@ -46,7 +49,13 @@ test('la app funciona completa sin ninguna violación de CSP', async ({ page }) 
 test('un origen ajeno no puede abrir el WebSocket ni usar el API', async ({ request }) => {
   const hello = await request.post('/api/v1/hello', {
     headers: { origin: 'https://sitio-malicioso.example' },
-    data: { type: 'hello', client_msg_id: crypto.randomUUID(), protocol_version: 1, app_version: 'x', language: 'es' },
+    data: {
+      type: 'hello',
+      client_msg_id: crypto.randomUUID(),
+      protocol_version: 1,
+      app_version: 'x',
+      language: 'es',
+    },
   });
   expect(hello.status()).toBe(403);
 });
