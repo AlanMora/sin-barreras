@@ -44,7 +44,7 @@ server_cert() { # nombre, SANs
   rm -f "$certs/$name.csr" "$certs/ca.srl"
 }
 server_cert valkey "DNS:valkey,DNS:localhost,IP:127.0.0.1"
-server_cert postgres "DNS:postgres,DNS:postgres-replica,DNS:localhost,IP:127.0.0.1"
+server_cert postgres "DNS:postgres,DNS:postgres-replica,DNS:postgres-restore,DNS:localhost,IP:127.0.0.1"
 
 # --- Secretos -------------------------------------------------------------
 new_secret() { # archivo, comando que imprime el valor
@@ -66,6 +66,7 @@ done
 new_secret c5_mock_api_key hex
 new_secret qr_keys qr_keys
 new_secret grafana_admin_password hex
+new_secret pgbackrest_cipher_pass sh -c "openssl rand -base64 48 | tr -d '\\n'"
 new_secret record_operational_keys sh -c "printf 'op1:%s' \"\$(openssl rand -base64 32)\""
 
 # Par de llaves de investigación (X25519). En desarrollo la privada vive
