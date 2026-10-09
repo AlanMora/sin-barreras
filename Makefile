@@ -1,7 +1,7 @@
 # Atajos para el trabajo diario. Cada objetivo solo encadena comandos
 # estándar (cargo, pnpm, docker compose); no esconde lógica.
 
-.PHONY: help bootstrap up up-apps down logs check test lint build fmt smoke protocol
+.PHONY: help bootstrap up up-apps down logs check test lint build fmt smoke protocol verify dlq
 
 help: ## Muestra esta ayuda
 	@grep -E '^[a-z-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-12s %s\n", $$1, $$2}'
@@ -41,6 +41,12 @@ build: ## Build de Rust y de la PWA (verifica el presupuesto)
 
 smoke: ## Prueba de punta a punta contra el sistema levantado (make up-apps)
 	node scripts/smoke-ws.mjs
+
+verify: ## Verifica la integridad del registro completo (rol auditor)
+	docker compose run --rm admin verify
+
+dlq: ## Muestra la cola de errores del registro
+	docker compose run --rm admin dlq list
 
 protocol: ## Regenera los tipos TypeScript del contrato desde crates/protocol
 	UPDATE_TS_BINDINGS=1 cargo test -p protocol --test typescript

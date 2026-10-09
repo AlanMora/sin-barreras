@@ -60,11 +60,24 @@ qr_keys() { printf '1:%s' "$(openssl rand -base64 32)"; }
 for user in admin bff record_writer healthcheck; do
   new_secret "valkey_${user}_password" hex
 done
-for role in superuser migrator record_writer reporting investigator; do
+for role in superuser migrator record_writer auditor reporting investigator replicator; do
   new_secret "postgres_${role}_password" hex
 done
 new_secret c5_mock_api_key hex
 new_secret qr_keys qr_keys
+new_secret record_operational_keys sh -c "printf 'op1:%s' \"\$(openssl rand -base64 32)\""
+
+# Par de llaves de investigación (X25519). En desarrollo la privada vive
+# aquí para poder probar la investigación; en producción NUNCA está en los
+# servidores en línea (ver docs/llaves.md).
+if [[ ! -f "$secrets/record_public_key" ]]; then
+  echo "→ Llaves de investigación del registro"
+  key="$(mktemp)"
+  openssl genpkey -algorithm X25519 -out "$key" 2>/dev/null
+  printf 'dev1:%s' "$(openssl pkey -in "$key" -outform DER | tail -c 32 | base64 -w0)" > "$secrets/record_private_key"
+  printf 'dev1:%s' "$(openssl pkey -in "$key" -pubout -outform DER | tail -c 32 | base64 -w0)" > "$secrets/record_public_key"
+  rm -f "$key"
+fi
 
 # El ACL se regenera siempre a partir de las contraseñas (es derivado).
 hash() { printf '%s' "$(cat "$1")" | openssl dgst -sha256 -r | cut -d' ' -f1; }
@@ -78,7 +91,7 @@ user default off
 user admin on #$(hash "$secrets/valkey_admin_password") ~* &* +@all
 user healthcheck on #$(hash "$secrets/valkey_healthcheck_password") resetkeys -@all +ping +hello
 user bff on #$(hash "$secrets/valkey_bff_password") ~sb:* &sb:* +@all -@dangerous -@admin +info
-user record_writer on #$(hash "$secrets/valkey_record_writer_password") ~sb:rec* resetchannels -@all +@stream +@connection +ping +xinfo
+user record_writer on #$(hash "$secrets/valkey_record_writer_password") ~sb:rec* resetchannels -@all +@stream +@connection +ping +info
 ACL
 
 # Permisos:

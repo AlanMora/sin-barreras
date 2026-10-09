@@ -66,10 +66,19 @@ services:
       - ./infra/postgres/pg_hba.conf:/etc/postgresql/pg_hba.conf:ro
       - ./infra/postgres/pg_ident.conf:/etc/postgresql/pg_ident.conf:ro
       - ./infra/postgres/start.sh:/usr/local/bin/sb-start.sh:ro
+      - ./infra/postgres/initdb/10-roles.sh:/docker-entrypoint-initdb.d/10-roles.sh:ro
+      - ./crates/registry/sql/roles.sql:/docker-entrypoint-initdb.d/roles.sql.inc:ro
       - ./infra/dev/certs/ca.crt:/run/tls-src/ca.crt:ro
       - ./infra/dev/certs/postgres.crt:/run/tls-src/postgres.crt:ro
       - ./infra/dev/certs/postgres.key:/run/tls-src/postgres.key:ro
-    secrets: [postgres_superuser_password]
+    secrets:
+      - postgres_superuser_password
+      - postgres_migrator_password
+      - postgres_record_writer_password
+      - postgres_auditor_password
+      - postgres_reporting_password
+      - postgres_investigator_password
+      - postgres_replicator_password
     shm_size: 256mb
     ports: ["127.0.0.1:${SB_POSTGRES_PORT:-15432}:5432"]
     healthcheck:
@@ -129,8 +138,10 @@ services:
       C5_MOCK_URL: http://c5-mock:8090
       C5_MOCK_API_KEY_FILE: /run/secrets/c5_mock_api_key
       QR_KEYS_FILE: /run/secrets/qr_keys
+      RECORD_PUBLIC_KEY_FILE: /run/secrets/record_public_key
+      RECORD_OPERATIONAL_KEYS_FILE: /run/secrets/record_operational_keys
       ALLOWED_ORIGINS: http://localhost:${SB_PORT:-8000},http://localhost:5173
-    secrets: [valkey_bff_password, dev_ca, c5_mock_api_key, qr_keys]
+    secrets: [valkey_bff_password, dev_ca, c5_mock_api_key, qr_keys, record_public_key, record_operational_keys]
     labels:
       traefik.enable: "true"
       traefik.http.routers.bff.rule: Path(`/ws`)
@@ -149,11 +160,47 @@ services:
       dockerfile: infra/docker/rust.Dockerfile
       target: record-writer
     image: sin-barreras/record-writer:dev
+    # 2 réplicas: si una muere, la otra reclama sus pendientes.
+    deploy:
+      replicas: 2
     environment:
       RECORD_WRITER_LISTEN_ADDR: 0.0.0.0:8081
       LOG_FORMAT: pretty
+      VALKEY_URL: valkeys://valkey:6379
+      VALKEY_USERNAME: record_writer
+      VALKEY_PASSWORD_FILE: /run/secrets/valkey_record_writer_password
+      VALKEY_CA_FILE: /run/secrets/dev_ca
+      PG_HOST: postgres
+      PG_DATABASE: sin_barreras
+      PG_USER: sb_writer
+      PG_PASSWORD_FILE: /run/secrets/postgres_record_writer_password
+      PG_CA_FILE: /run/secrets/dev_ca
+      RECORD_WRITER_CHECKPOINT_SECS: "60"
+    secrets: [valkey_record_writer_password, postgres_record_writer_password, dev_ca]
     depends_on:
       valkey: { condition: service_healthy }
+      migrate: { condition: service_completed_successfully }
+
+  # Aplica las migraciones (una vez) con el rol sb_migrator.
+  migrate:
+    <<: *rust-service
+    restart: "no"
+    build:
+      context: .
+      dockerfile: infra/docker/rust.Dockerfile
+      target: sb-admin
+    image: sin-barreras/sb-admin:dev
+    command: ["migrate"]
+    healthcheck:
+      disable: true
+    environment:
+      PG_HOST: postgres
+      PG_DATABASE: sin_barreras
+      PG_USER: sb_migrator
+      PG_PASSWORD_FILE: /run/secrets/postgres_migrator_password
+      PG_CA_FILE: /run/secrets/dev_ca
+    secrets: [postgres_migrator_password, dev_ca]
+    depends_on:
       postgres: { condition: service_healthy }
 
   c5-mock:
@@ -170,6 +217,32 @@ services:
     secrets: [c5_mock_api_key]
     # Expuesto solo en localhost para usar /mock-control en demos y pruebas.
     ports: ["127.0.0.1:${SB_C5_MOCK_PORT:-8090}:8090"]
+
+  # Herramienta de administración bajo demanda (no corre sola):
+  #   docker compose run --rm admin verify
+  #   docker compose run --rm admin dlq list
+  admin:
+    <<: *rust-service
+    profiles: [tools]
+    restart: "no"
+    image: sin-barreras/sb-admin:dev
+    build:
+      context: .
+      dockerfile: infra/docker/rust.Dockerfile
+      target: sb-admin
+    healthcheck:
+      disable: true
+    environment:
+      PG_HOST: postgres
+      PG_DATABASE: sin_barreras
+      PG_USER: sb_auditor
+      PG_PASSWORD_FILE: /run/secrets/postgres_auditor_password
+      PG_CA_FILE: /run/secrets/dev_ca
+      VALKEY_URL: valkeys://valkey:6379
+      VALKEY_USERNAME: admin
+      VALKEY_PASSWORD_FILE: /run/secrets/valkey_admin_password
+      VALKEY_CA_FILE: /run/secrets/dev_ca
+    secrets: [postgres_auditor_password, valkey_admin_password, dev_ca]
 
   pwa:
     <<: *hardening
@@ -193,12 +266,30 @@ secrets:
     file: ./infra/dev/certs/ca.crt
   valkey_bff_password:
     file: ./infra/dev/secrets/valkey_bff_password
+  valkey_admin_password:
+    file: ./infra/dev/secrets/valkey_admin_password
   valkey_record_writer_password:
     file: ./infra/dev/secrets/valkey_record_writer_password
   c5_mock_api_key:
     file: ./infra/dev/secrets/c5_mock_api_key
   qr_keys:
     file: ./infra/dev/secrets/qr_keys
+  record_public_key:
+    file: ./infra/dev/secrets/record_public_key
+  record_operational_keys:
+    file: ./infra/dev/secrets/record_operational_keys
+  postgres_migrator_password:
+    file: ./infra/dev/secrets/postgres_migrator_password
+  postgres_record_writer_password:
+    file: ./infra/dev/secrets/postgres_record_writer_password
+  postgres_auditor_password:
+    file: ./infra/dev/secrets/postgres_auditor_password
+  postgres_reporting_password:
+    file: ./infra/dev/secrets/postgres_reporting_password
+  postgres_investigator_password:
+    file: ./infra/dev/secrets/postgres_investigator_password
+  postgres_replicator_password:
+    file: ./infra/dev/secrets/postgres_replicator_password
   valkey_users_acl:
     file: ./infra/dev/secrets/valkey-users.acl
   valkey_healthcheck_password:

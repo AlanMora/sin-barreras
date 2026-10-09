@@ -20,7 +20,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,target=/src/target,sharing=locked \
     cargo build --release --locked --bins \
     && mkdir -p /out \
-    && for bin in bff record-writer c5-mock; do install "target/release/$bin" "/out/$bin"; done
+    && for bin in bff record-writer c5-mock sb-admin; do install "target/release/$bin" "/out/$bin"; done
 
 FROM gcr.io/distroless/cc-debian13:nonroot AS runtime-base
 USER nonroot:nonroot
@@ -36,3 +36,9 @@ COPY --from=build /out/record-writer /app
 
 FROM runtime-base AS c5-mock
 COPY --from=build /out/c5-mock /app
+
+# Herramienta de administración (migraciones, verificación, cola de errores).
+FROM gcr.io/distroless/cc-debian13:nonroot AS sb-admin
+COPY --from=build /out/sb-admin /sb-admin
+USER nonroot:nonroot
+ENTRYPOINT ["/sb-admin"]

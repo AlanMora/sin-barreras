@@ -26,6 +26,7 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      # Las pruebas de integración levantan Valkey y Postgres reales (Docker).
       - run: cargo test --workspace --locked
 
   pwa:
@@ -64,6 +65,11 @@ jobs:
           curl -fsS -o /dev/null http://127.0.0.1:8000/
       - name: Prueba de punta a punta del protocolo (Traefik → 2 réplicas del BFF → C5 simulado)
         run: node scripts/smoke-ws.mjs
+      - name: El registro llegó a Postgres y su integridad verifica
+        run: |
+          sleep 3
+          docker compose run --rm -T admin verify
+          docker compose run --rm -T admin dlq list
       - name: Logs si algo falló
         if: failure()
         run: docker compose --profile apps logs --no-color
