@@ -1,0 +1,17 @@
+[package]
+name = "events"
+version = "0.1.0"
+description = "Sobre de los eventos del registro completo (BFF → Valkey Streams → record-writer → Postgres)."
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+protocol.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+uuid.workspace = true
+
+[lints]
+workspace = true
