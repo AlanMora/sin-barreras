@@ -15,7 +15,7 @@ ENV VITE_FALLBACK_PHONE=${VITE_FALLBACK_PHONE}
 RUN pnpm --filter @sin-barreras/pwa build
 
 # Imagen oficial de Nginx Inc. que corre como usuario no-root (puerto 8080).
-FROM nginxinc/nginx-unprivileged:1.29-alpine
+FROM nginxinc/nginx-unprivileged:1.31-alpine
 COPY infra/nginx/pwa.conf /etc/nginx/conf.d/default.conf
 COPY infra/nginx/security-headers.conf /etc/nginx/snippets/security-headers.conf
 COPY --from=build /src/apps/pwa/dist /usr/share/nginx/html
