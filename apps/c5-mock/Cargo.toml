@@ -10,12 +10,18 @@ publish.workspace = true
 [dependencies]
 anyhow.workspace = true
 axum.workspace = true
+getrandom.workspace = true
+protocol.workspace = true
+serde.workspace = true
+serde_json.workspace = true
 service-kit.workspace = true
 tokio.workspace = true
 tracing.workspace = true
+uuid.workspace = true
 
 [dev-dependencies]
-serde_json.workspace = true
+futures.workspace = true
+tokio-tungstenite.workspace = true
 tower = { workspace = true, features = ["util"] }
 
 [lints]
