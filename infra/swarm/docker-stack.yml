@@ -1,0 +1,517 @@
+# Sin Barreras — despliegue en Docker Swarm.
+#
+#   docker stack deploy -c infra/swarm/docker-stack.yml sin-barreras
+#
+# Requisitos previos (ver docs/despliegue.md):
+#   - Etiquetas de nodo: sb.postgres=primary | replica, sb.valkey=true, sb.edge=true
+#   - sysctl vm.overcommit_memory=1 en el nodo de Valkey (ADR-0003)
+#   - Secrets creados con `docker secret create` (lista al final)
+#   - Imágenes publicadas en ${REGISTRY}; desplegar SIEMPRE el BFF antes que la PWA
+#     cuando cambie el protocolo (docs/contrato-eventos.md)
+
+x-update: &rolling
+  # Cero caída: la nueva tarea arranca y queda sana antes de retirar la vieja;
+  # si falla, rollback automático.
+  update_config:
+    parallelism: 1
+    delay: 10s
+    order: start-first
+    failure_action: rollback
+    monitor: 30s
+  rollback_config:
+    parallelism: 1
+    order: start-first
+  restart_policy:
+    condition: any
+    delay: 2s
+    window: 60s
+
+x-logging: &logging
+  logging:
+    driver: json-file
+    options: { max-size: "20m", max-file: "5" }
+
+x-rust-env: &rust-env
+  LOG_FORMAT: json
+  RUST_LOG: info
+  OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+
+networks:
+  # Borde: Traefik ↔ PWA/BFF.
+  edge:
+    driver: overlay
+  # Datos: BFF, record-writer, Valkey, Postgres, C5. Cifrada (IPsec) entre nodos.
+  backend:
+    driver: overlay
+    driver_opts: { encrypted: "true" }
+  # Observabilidad.
+  obs:
+    driver: overlay
+    driver_opts: { encrypted: "true" }
+  # Solo Traefik ↔ proxy del socket de Docker.
+  docker-api:
+    driver: overlay
+    internal: true
+
+volumes:
+  valkey-data:
+  postgres-data:
+  postgres-replica-data:
+  pgbackrest-repo:
+  traefik-acme:
+  prometheus-data:
+  tempo-data:
+  grafana-data:
+
+configs:
+  valkey_conf:
+    file: ../valkey/valkey.conf
+  valkey_start:
+    file: ../valkey/start.sh
+  otel_collector:
+    file: ../observability/otel-collector.yaml
+  tempo:
+    file: ../observability/tempo.yaml
+  prometheus:
+    file: ../observability/prometheus.yml
+  prometheus_alerts:
+    file: ../observability/alerts.yml
+  alertmanager:
+    file: ../observability/alertmanager.yml
+  grafana_datasources:
+    file: ../observability/grafana/provisioning/datasources/datasources.yaml
+  grafana_dashboards:
+    file: ../observability/grafana/provisioning/dashboards/dashboards.yaml
+  grafana_dashboard_operacion:
+    file: ../observability/grafana/dashboards/operacion.json
+
+services:
+  # --- Borde ----------------------------------------------------------------
+  # Traefik no monta el socket de Docker: habla con un proxy de solo lectura.
+  docker-socket-proxy:
+    image: tecnativa/docker-socket-proxy:v0.4.1
+    <<: *logging
+    environment:
+      SERVICES: 1
+      TASKS: 1
+      NETWORKS: 1
+      NODES: 1
+      POST: 0
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks: [docker-api]
+    deploy:
+      mode: global
+      placement:
+        constraints: [node.role == manager]
+      resources:
+        limits: { cpus: "0.25", memory: 64M }
+
+  traefik:
+    image: traefik:v3.7
+    <<: *logging
+    command:
+      - --providers.swarm=true
+      - --providers.swarm.endpoint=tcp://docker-socket-proxy:2375
+      - --providers.swarm.exposedbydefault=false
+      - --providers.swarm.network=sin-barreras_edge
+      - --entrypoints.web.address=:80
+      - --entrypoints.web.http.redirections.entrypoint.to=websecure
+      - --entrypoints.web.http.redirections.entrypoint.scheme=https
+      - --entrypoints.websecure.address=:443
+      - --entrypoints.websecure.http.tls.certresolver=le
+      - --certificatesresolvers.le.acme.email=${ACME_EMAIL:?correo para Let's Encrypt}
+      - --certificatesresolvers.le.acme.storage=/acme/acme.json
+      - --certificatesresolvers.le.acme.tlschallenge=true
+      - --entrypoints.metrics.address=:8082
+      - --metrics.prometheus=true
+      - --metrics.prometheus.entrypoint=metrics
+      - --ping=true
+      - --accesslog=true
+      - --accesslog.format=json
+      # POLÍTICA: los logs nunca contienen la IP del ciudadano.
+      - --accesslog.fields.names.ClientAddr=drop
+      - --accesslog.fields.names.ClientHost=drop
+      - --accesslog.fields.names.ClientPort=drop
+      - --accesslog.fields.names.ClientUsername=drop
+      - --accesslog.fields.headers.defaultmode=drop
+    ports:
+      - { target: 80, published: 80, mode: host }
+      - { target: 443, published: 443, mode: host }
+    volumes:
+      - traefik-acme:/acme
+    networks: [edge, obs, docker-api]
+    healthcheck:
+      test: ["CMD", "traefik", "healthcheck", "--ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    deploy:
+      <<: *rolling
+      mode: global
+      placement:
+        constraints: [node.labels.sb.edge == true]
+      resources:
+        limits: { cpus: "1", memory: 256M }
+      labels:
+        traefik.enable: "true"
+        # HSTS y cabeceras de seguridad para todo el dominio.
+        traefik.http.middlewares.sb-secure.headers.stsSeconds: "63072000"
+        traefik.http.middlewares.sb-secure.headers.stsIncludeSubdomains: "true"
+        traefik.http.middlewares.sb-secure.headers.stsPreload: "true"
+        # Límite holgado por IP en el borde (CGNAT: ver ADR-0020).
+        traefik.http.middlewares.sb-limit.ratelimit.average: "200"
+        traefik.http.middlewares.sb-limit.ratelimit.burst: "400"
+        traefik.http.services.noop.loadbalancer.server.port: "9999"
+
+  pwa:
+    image: ${REGISTRY:-registry.local}/sin-barreras/pwa:${TAG:-latest}
+    <<: *logging
+    networks: [edge]
+    read_only: true
+    tmpfs: ["/tmp"]
+    deploy:
+      <<: *rolling
+      replicas: 2
+      resources:
+        limits: { cpus: "0.5", memory: 64M }
+      labels:
+        traefik.enable: "true"
+        traefik.http.routers.pwa.rule: Host(`${DOMAIN:?dominio público}`)
+        traefik.http.routers.pwa.entrypoints: websecure
+        traefik.http.routers.pwa.priority: "1"
+        traefik.http.routers.pwa.middlewares: sb-secure@swarm,sb-limit@swarm
+        traefik.http.services.pwa.loadbalancer.server.port: "8080"
+
+  # --- Servicios ------------------------------------------------------------
+  bff:
+    image: ${REGISTRY:-registry.local}/sin-barreras/bff:${TAG:-latest}
+    <<: *logging
+    environment:
+      <<: *rust-env
+      BFF_LISTEN_ADDR: 0.0.0.0:8080
+      BFF_REPLICA_ID: "bff-{{.Task.Slot}}"
+      VALKEY_URL: valkeys://valkey:6379
+      VALKEY_USERNAME: bff
+      VALKEY_PASSWORD_FILE: /run/secrets/valkey_bff_password
+      VALKEY_CA_FILE: /run/secrets/internal_ca
+      C5_MOCK_URL: ${C5_URL:-http://c5-mock:8090}
+      C5_MOCK_API_KEY_FILE: /run/secrets/c5_api_key
+      QR_KEYS_FILE: /run/secrets/qr_keys
+      QR_REVOKED_POINTS: ${QR_REVOKED_POINTS:-}
+      RECORD_PUBLIC_KEY_FILE: /run/secrets/record_public_key
+      RECORD_OPERATIONAL_KEYS_FILE: /run/secrets/record_operational_keys
+      ALLOWED_ORIGINS: https://${DOMAIN}
+    secrets:
+      - { source: valkey_bff_password, mode: 0400, uid: "65532" }
+      - { source: internal_ca, mode: 0444 }
+      - { source: c5_api_key, mode: 0400, uid: "65532" }
+      - { source: qr_keys, mode: 0400, uid: "65532" }
+      - { source: record_public_key, mode: 0444 }
+      - { source: record_operational_keys, mode: 0400, uid: "65532" }
+    networks: [edge, backend, obs]
+    read_only: true
+    stop_grace_period: 30s
+    deploy:
+      <<: *rolling
+      replicas: 2
+      placement:
+        max_replicas_per_node: 1
+      resources:
+        reservations: { cpus: "0.25", memory: 64M }
+        limits: { cpus: "1", memory: 256M }
+      labels:
+        traefik.enable: "true"
+        traefik.http.routers.bff.rule: Host(`${DOMAIN}`) && (Path(`/ws`) || PathPrefix(`/api/`))
+        traefik.http.routers.bff.entrypoints: websecure
+        traefik.http.routers.bff.middlewares: sb-secure@swarm,sb-limit@swarm
+        traefik.http.services.bff.loadbalancer.server.port: "8080"
+        traefik.http.services.bff.loadbalancer.healthcheck.path: /ready
+        traefik.http.services.bff.loadbalancer.healthcheck.interval: 5s
+
+  record-writer:
+    image: ${REGISTRY:-registry.local}/sin-barreras/record-writer:${TAG:-latest}
+    <<: *logging
+    environment:
+      <<: *rust-env
+      RECORD_WRITER_LISTEN_ADDR: 0.0.0.0:8081
+      # Nombre estable por réplica: al reiniciar retoma sus propios pendientes.
+      RECORD_WRITER_CONSUMER: "record-writer-{{.Task.Slot}}"
+      VALKEY_URL: valkeys://valkey:6379
+      VALKEY_USERNAME: record_writer
+      VALKEY_PASSWORD_FILE: /run/secrets/valkey_record_writer_password
+      VALKEY_CA_FILE: /run/secrets/internal_ca
+      PG_HOST: postgres
+      PG_DATABASE: sin_barreras
+      PG_USER: sb_writer
+      PG_PASSWORD_FILE: /run/secrets/postgres_record_writer_password
+      PG_CA_FILE: /run/secrets/internal_ca
+    secrets:
+      - { source: valkey_record_writer_password, mode: 0400, uid: "65532" }
+      - { source: postgres_record_writer_password, mode: 0400, uid: "65532" }
+      - { source: internal_ca, mode: 0444 }
+    networks: [backend, obs]
+    read_only: true
+    stop_grace_period: 30s
+    deploy:
+      <<: *rolling
+      replicas: 2
+      placement:
+        max_replicas_per_node: 1
+      resources:
+        limits: { cpus: "1", memory: 256M }
+
+  # Aplica migraciones una vez por despliegue (rol sb_migrator).
+  migrate:
+    image: ${REGISTRY:-registry.local}/sin-barreras/sb-admin:${TAG:-latest}
+    command: ["migrate"]
+    environment:
+      PG_HOST: postgres
+      PG_DATABASE: sin_barreras
+      PG_USER: sb_migrator
+      PG_PASSWORD_FILE: /run/secrets/postgres_migrator_password
+      PG_CA_FILE: /run/secrets/internal_ca
+    secrets:
+      - { source: postgres_migrator_password, mode: 0400, uid: "65532" }
+      - { source: internal_ca, mode: 0444 }
+    networks: [backend]
+    deploy:
+      mode: replicated-job
+      restart_policy: { condition: on-failure, max_attempts: 10, delay: 10s }
+
+  # Simulador del C5: SOLO en ambientes de prueba. En producción, quitar este
+  # servicio y apuntar C5_URL al adaptador real (docs/c5-preguntas.md).
+  c5-mock:
+    image: ${REGISTRY:-registry.local}/sin-barreras/c5-mock:${TAG:-latest}
+    <<: *logging
+    environment:
+      <<: *rust-env
+      C5_MOCK_LISTEN_ADDR: 0.0.0.0:8090
+      C5_MOCK_API_KEY_FILE: /run/secrets/c5_api_key
+    secrets:
+      - { source: c5_api_key, mode: 0400, uid: "65532" }
+    networks: [backend, obs]
+    read_only: true
+    deploy:
+      replicas: ${C5_MOCK_REPLICAS:-1}
+
+  # --- Datos ----------------------------------------------------------------
+  valkey:
+    image: valkey/valkey:9.1-alpine
+    <<: *logging
+    entrypoint: ["/bin/sh", "/usr/local/bin/sb-start.sh"]
+    configs:
+      - { source: valkey_conf, target: /usr/local/etc/valkey/valkey.conf }
+      - { source: valkey_start, target: /usr/local/bin/sb-start.sh }
+    secrets:
+      - { source: internal_ca, target: /run/tls-src/ca.crt }
+      - { source: valkey_tls_crt, target: /run/tls-src/valkey.crt }
+      - { source: valkey_tls_key, target: /run/tls-src/valkey.key, mode: 0400 }
+      - { source: valkey_users_acl, mode: 0400 }
+      - { source: valkey_healthcheck_password, mode: 0400 }
+    volumes:
+      - valkey-data:/data
+    networks: [backend]
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          VALKEYCLI_AUTH="$$(cat /run/secrets/valkey_healthcheck_password)"
+          valkey-cli --tls --cacert /tls/ca.crt --user healthcheck ping | grep -q PONG
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    deploy:
+      replicas: 1
+      placement:
+        constraints: [node.labels.sb.valkey == true]
+      resources:
+        reservations: { memory: 1G }
+        limits: { memory: 2G }
+      restart_policy: { condition: any, delay: 2s }
+
+  postgres:
+    image: ${REGISTRY:-registry.local}/sin-barreras/postgres:${TAG:-latest}
+    <<: *logging
+    environment:
+      SB_PG_ROLE: primary
+      POSTGRES_DB: sin_barreras
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_superuser_password
+      POSTGRES_INITDB_ARGS: "--data-checksums --encoding=UTF8 --locale-provider=builtin --builtin-locale=C.UTF-8"
+      PGBACKREST_REPO2_S3_BUCKET: ${BACKUP_S3_BUCKET:-}
+      PGBACKREST_REPO2_S3_ENDPOINT: ${BACKUP_S3_ENDPOINT:-}
+      PGBACKREST_REPO2_S3_REGION: ${BACKUP_S3_REGION:-us-east-1}
+    secrets:
+      - { source: internal_ca, target: /run/tls-src/ca.crt }
+      - { source: postgres_tls_crt, target: /run/tls-src/postgres.crt }
+      - { source: postgres_tls_key, target: /run/tls-src/postgres.key, mode: 0400 }
+      - postgres_superuser_password
+      - postgres_migrator_password
+      - postgres_record_writer_password
+      - postgres_auditor_password
+      - postgres_reporting_password
+      - postgres_investigator_password
+      - postgres_replicator_password
+      - pgbackrest_cipher_pass
+      - pgbackrest_repo2_cipher_pass
+      - pgbackrest_s3_key
+      - pgbackrest_s3_secret
+    volumes:
+      - postgres-data:/var/lib/postgresql
+      - pgbackrest-repo:/var/lib/pgbackrest
+      # Swarm ignora shm_size: memoria compartida de Postgres como tmpfs.
+      - { type: tmpfs, target: /dev/shm, tmpfs: { size: 268435456 } }
+    networks: [backend]
+    stop_grace_period: 60s
+    healthcheck:
+      test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "postgres", "-d", "sin_barreras"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    deploy:
+      replicas: 1
+      placement:
+        constraints: [node.labels.sb.postgres == primary]
+      resources:
+        reservations: { memory: 2G }
+        limits: { memory: 4G }
+      restart_policy: { condition: any, delay: 5s }
+
+  postgres-replica:
+    image: ${REGISTRY:-registry.local}/sin-barreras/postgres:${TAG:-latest}
+    <<: *logging
+    environment:
+      SB_PG_ROLE: replica
+      SB_PG_PRIMARY_HOST: postgres
+      SB_PG_REPLICA_NAME: replica1
+    secrets:
+      - { source: internal_ca, target: /run/tls-src/ca.crt }
+      - { source: postgres_tls_crt, target: /run/tls-src/postgres.crt }
+      - { source: postgres_tls_key, target: /run/tls-src/postgres.key, mode: 0400 }
+      - postgres_replicator_password
+    volumes:
+      - postgres-replica-data:/var/lib/postgresql
+      - { type: tmpfs, target: /dev/shm, tmpfs: { size: 268435456 } }
+    networks: [backend]
+    stop_grace_period: 60s
+    healthcheck:
+      test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "postgres"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+    deploy:
+      replicas: 1
+      placement:
+        # En un nodo DISTINTO al primario.
+        constraints: [node.labels.sb.postgres == replica]
+      resources:
+        reservations: { memory: 2G }
+        limits: { memory: 4G }
+
+  # --- Observabilidad (autoalojada) ----------------------------------------
+  otel-collector:
+    image: otel/opentelemetry-collector:0.162.0
+    <<: *logging
+    command: ["--config=/etc/otelcol/config.yaml"]
+    configs:
+      - { source: otel_collector, target: /etc/otelcol/config.yaml }
+    networks: [obs]
+    deploy:
+      <<: *rolling
+      replicas: 2
+      resources:
+        limits: { cpus: "0.5", memory: 256M }
+
+  tempo:
+    image: grafana/tempo:2.10.0
+    <<: *logging
+    command: ["-config.file=/etc/tempo.yaml"]
+    configs:
+      - { source: tempo, target: /etc/tempo.yaml }
+    volumes:
+      - tempo-data:/var/tempo
+    networks: [obs]
+    deploy:
+      replicas: 1
+      resources:
+        limits: { memory: 1G }
+
+  prometheus:
+    image: prom/prometheus:v3.15.0
+    <<: *logging
+    command: ["--config.file=/etc/prometheus/prometheus.yml", "--storage.tsdb.retention.time=30d"]
+    configs:
+      - { source: prometheus, target: /etc/prometheus/prometheus.yml }
+      - { source: prometheus_alerts, target: /etc/prometheus/alerts.yml }
+    volumes:
+      - prometheus-data:/prometheus
+    networks: [obs, backend]
+    deploy:
+      replicas: 1
+      resources:
+        limits: { memory: 1G }
+
+  alertmanager:
+    image: prom/alertmanager:v0.34.1
+    <<: *logging
+    configs:
+      - { source: alertmanager, target: /etc/alertmanager/alertmanager.yml }
+    networks: [obs]
+    deploy:
+      replicas: 1
+
+  grafana:
+    image: grafana/grafana:13.2.3
+    <<: *logging
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD__FILE: /run/secrets/grafana_admin_password
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_SERVER_ROOT_URL: https://${OPS_DOMAIN:-ops.local}/
+    secrets: [grafana_admin_password]
+    configs:
+      - { source: grafana_datasources, target: /etc/grafana/provisioning/datasources/datasources.yaml }
+      - { source: grafana_dashboards, target: /etc/grafana/provisioning/dashboards/dashboards.yaml }
+      - { source: grafana_dashboard_operacion, target: /var/lib/grafana/dashboards/operacion.json }
+    volumes:
+      - grafana-data:/var/lib/grafana
+    networks: [obs, edge]
+    deploy:
+      replicas: 1
+      labels:
+        # Solo desde la red interna del municipio (allowlist en el borde).
+        traefik.enable: "true"
+        traefik.http.routers.grafana.rule: Host(`${OPS_DOMAIN:-ops.local}`)
+        traefik.http.routers.grafana.entrypoints: websecure
+        traefik.http.routers.grafana.middlewares: sb-secure@swarm,sb-ops-only@swarm
+        traefik.http.middlewares.sb-ops-only.ipallowlist.sourcerange: ${OPS_ALLOWLIST:-10.0.0.0/8}
+        traefik.http.services.grafana.loadbalancer.server.port: "3000"
+
+secrets:
+  internal_ca: { external: true }
+  valkey_tls_crt: { external: true }
+  valkey_tls_key: { external: true }
+  valkey_users_acl: { external: true }
+  valkey_healthcheck_password: { external: true }
+  valkey_bff_password: { external: true }
+  valkey_record_writer_password: { external: true }
+  postgres_tls_crt: { external: true }
+  postgres_tls_key: { external: true }
+  postgres_superuser_password: { external: true }
+  postgres_migrator_password: { external: true }
+  postgres_record_writer_password: { external: true }
+  postgres_auditor_password: { external: true }
+  postgres_reporting_password: { external: true }
+  postgres_investigator_password: { external: true }
+  postgres_replicator_password: { external: true }
+  pgbackrest_cipher_pass: { external: true }
+  pgbackrest_repo2_cipher_pass: { external: true }
+  pgbackrest_s3_key: { external: true }
+  pgbackrest_s3_secret: { external: true }
+  c5_api_key: { external: true }
+  qr_keys: { external: true }
+  record_public_key: { external: true }
+  record_operational_keys: { external: true }
+  grafana_admin_password: { external: true }
