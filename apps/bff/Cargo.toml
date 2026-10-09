@@ -23,6 +23,7 @@ serde.workspace = true
 serde_json.workspace = true
 service-kit.workspace = true
 sha2.workspace = true
+subtle.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 tokio-tungstenite.workspace = true
@@ -32,6 +33,7 @@ valkey-client.workspace = true
 zeroize.workspace = true
 
 [dev-dependencies]
+reqwest.workspace = true
 testcontainers-modules.workspace = true
 tower = { workspace = true, features = ["util"] }
 

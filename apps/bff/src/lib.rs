@@ -9,10 +9,12 @@
 pub mod c5;
 pub mod config;
 pub mod forwarder;
+pub mod http;
 pub mod hub;
 pub mod inbound;
 pub mod qr;
 pub mod records;
+pub mod session;
 pub mod store;
 pub mod token;
 pub mod valkey;
@@ -20,7 +22,11 @@ pub mod ws;
 
 use std::{collections::BTreeMap, sync::Arc, time::Duration};
 
-use axum::{Router, routing::get};
+use axum::{
+    Router,
+    extract::DefaultBodyLimit,
+    routing::{get, post},
+};
 use service_kit::health::{self, CheckStatus, ReadinessProbe};
 use tokio::task::JoinHandle;
 
@@ -89,6 +95,9 @@ pub fn router(state: Arc<AppState>) -> Router {
     let health = health::router(ValkeyProbe(state.store.clone()), env!("CARGO_PKG_VERSION"));
     Router::new()
         .route("/ws", get(ws::handler))
+        .route("/api/v1/hello", post(http::hello))
+        .route("/api/v1/sync", post(http::sync))
+        .layer(DefaultBodyLimit::max(http::MAX_BODY_BYTES))
         .with_state(state)
         .merge(health)
 }

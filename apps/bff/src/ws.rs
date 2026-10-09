@@ -1,12 +1,11 @@
-//! Conexión WebSocket con la PWA (protocolo v1, ver `docs/contrato-eventos.md`).
+//! Transporte WebSocket (protocolo v1, ver `docs/contrato-eventos.md`).
 //!
 //! Ciclo de vida de una conexión:
 //! 1. El primer mensaje debe ser `hello` (10 s máximo). Se negocia versión.
 //! 2. Se crea o reanuda la sesión y se responde `welcome` con un token nuevo.
 //! 3. Se reenvían los mensajes secuenciados que el cliente no tiene.
-//! 4. Bucle: comandos del cliente → aceptación durable → `ack`; mensajes
-//!    del bus → cliente; verificación periódica de `seq` para recuperar lo
-//!    que el pub/sub pudiera haber perdido.
+//! 4. Bucle: comandos → `session::handle_command` (aceptación durable) → `ack`;
+//!    mensajes del bus → cliente; verificación periódica de `seq`.
 
 use std::{
     collections::HashSet,
@@ -20,25 +19,21 @@ use axum::{
         ConnectInfo, State, WebSocketUpgrade,
         ws::{CloseFrame, Message, Utf8Bytes, WebSocket},
     },
-    http::{HeaderMap, StatusCode, header},
+    http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
 };
-use events::{EventKind, RecordEvent, SensitivePayload};
+use events::{EventKind, RecordEvent};
 use futures::{SinkExt, StreamExt, stream::SplitSink};
 use protocol::{
-    AckStatus, Author, ClientMessage, EntryVerification, ErrorCode, HEARTBEAT_INTERVAL_MS, Hello,
-    IncidentState, IncidentSummary, MAX_CLIENT_FRAME_BYTES, PROTOCOL_VERSION, Pong, ServerAck,
-    ServerChatMessage, ServerControl, ServerError, ServerEvent, Timestamp, Welcome,
+    ErrorCode, HEARTBEAT_INTERVAL_MS, MAX_CLIENT_FRAME_BYTES, PROTOCOL_VERSION, ServerControl,
 };
 use uuid::Uuid;
 
 use crate::{
     AppState,
-    forwarder::{self, ID_NAMESPACE, location_payload, producer},
+    forwarder::producer,
     hub::LiveFrame,
-    records::SEQ_PLACEHOLDER,
-    store::{AcceptCommand, AcceptOutcome, ResumeOutcome},
-    token,
+    session::{self, CommandReply, NetworkInfo, error},
 };
 
 const HELLO_TIMEOUT: Duration = Duration::from_secs(10);
@@ -56,62 +51,19 @@ const CLOSE_SESSION_GONE: u16 = 4410;
 const CLOSE_UNSUPPORTED_VERSION: u16 = 4426;
 const CLOSE_UNAVAILABLE: u16 = 4503;
 
-/// Datos de red del cliente. Sensibles: solo se guardan cifrados en el registro.
-#[derive(Debug, Clone)]
-struct NetworkInfo {
-    ip: Option<String>,
-    user_agent: Option<String>,
-}
-
 pub async fn handler(
     State(state): State<Arc<AppState>>,
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
     ws: WebSocketUpgrade,
 ) -> Response {
-    if !origin_allowed(
-        &state.config.allowed_origins,
-        headers.get(header::ORIGIN).and_then(|v| v.to_str().ok()),
-    ) {
+    if !session::origin_allowed(&state.config.allowed_origins, &headers) {
         return (StatusCode::FORBIDDEN, "origen no permitido").into_response();
     }
-    let network = NetworkInfo {
-        ip: Some(client_ip(&headers, peer)),
-        user_agent: headers
-            .get(header::USER_AGENT)
-            .and_then(|v| v.to_str().ok())
-            .map(|ua| ua.chars().take(512).collect()),
-    };
+    let network = NetworkInfo::from_request(&headers, peer);
     ws.max_message_size(MAX_CLIENT_FRAME_BYTES)
         .max_frame_size(MAX_CLIENT_FRAME_BYTES)
-        .on_upgrade(move |socket| async move {
-            Connection::run(state, socket, network).await;
-        })
-}
-
-/// Los navegadores siempre envían `Origin` en un WebSocket; se valida para
-/// evitar secuestro de WebSocket entre sitios (CSWSH). Clientes que no son
-/// navegador (pruebas, herramientas) no lo envían y se permiten.
-fn origin_allowed(allowed: &[String], origin: Option<&str>) -> bool {
-    match origin {
-        None => true,
-        Some(origin) => allowed
-            .iter()
-            .any(|a| a == "*" || a.eq_ignore_ascii_case(origin)),
-    }
-}
-
-/// IP del cliente: el BFF solo es alcanzable a través de Traefik, que agrega
-/// la IP real al final de `X-Forwarded-For`.
-fn client_ip(headers: &HeaderMap, peer: SocketAddr) -> String {
-    headers
-        .get("x-forwarded-for")
-        .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.rsplit(',').next())
-        .map(str::trim)
-        .filter(|ip| ip.parse::<std::net::IpAddr>().is_ok())
-        .map(str::to_owned)
-        .unwrap_or_else(|| peer.ip().to_string())
+        .on_upgrade(move |socket| Connection::run(state, socket, network))
 }
 
 type Sink = SplitSink<WebSocket, Message>;
@@ -133,7 +85,7 @@ impl Connection {
 
         // 1. hello
         let hello = match tokio::time::timeout(HELLO_TIMEOUT, stream.next()).await {
-            Ok(Some(Ok(Message::Text(text)))) => parse_hello(&text),
+            Ok(Some(Ok(Message::Text(text)))) => session::parse_hello(&text),
             Ok(_) => Err((
                 ErrorCode::HelloRequired,
                 "se esperaba hello".to_owned(),
@@ -153,48 +105,29 @@ impl Connection {
             }
         };
         if hello.protocol_version != PROTOCOL_VERSION {
-            let mut err = error(
-                ErrorCode::UnsupportedProtocolVersion,
-                format!("versión {} no soportada", hello.protocol_version),
-                Some(hello.client_msg_id),
-                false,
-            );
-            if let ServerControl::Error(e) = &mut err {
-                e.supported_versions = Some(vec![PROTOCOL_VERSION]);
-            }
-            let _ = send_control(&mut sink, err).await;
+            let _ = send_control(&mut sink, session::unsupported_version(&hello)).await;
             close(&mut sink, CLOSE_UNSUPPORTED_VERSION, "versión no soportada").await;
             return;
         }
 
         // 2. sesión
-        let established = match establish_session(&state, &hello, &network).await {
+        let established = match session::establish_session(&state, &hello, &dropped, &network).await
+        {
             Ok(e) => e,
-            Err(error) => {
-                tracing::error!(%error, "no se pudo establecer la sesión");
-                let _ = send_control(
-                    &mut sink,
-                    self::error(
-                        ErrorCode::Internal,
-                        "servicio no disponible".into(),
-                        Some(hello.client_msg_id),
-                        true,
-                    ),
-                )
-                .await;
+            Err(e) => {
+                tracing::error!(error = %e, "no se pudo establecer la sesión");
+                let reply = error(
+                    ErrorCode::Internal,
+                    "servicio no disponible".into(),
+                    Some(hello.client_msg_id),
+                    true,
+                );
+                let _ = send_control(&mut sink, reply).await;
                 close(&mut sink, CLOSE_UNAVAILABLE, "servicio no disponible").await;
                 return;
             }
         };
         let session_id = established.session_id;
-        if !dropped.is_empty() {
-            state.records.record(
-                RecordEvent::new(EventKind::FieldsDropped, producer(&state))
-                    .session(session_id)
-                    .attr("message_type", "hello")
-                    .attr("fields", dropped.clone()),
-            );
-        }
 
         // Registrarse en el hub ANTES de leer el estado: nada se pierde entre
         // la lectura y la suscripción (los duplicados se descartan por `seq`).
@@ -204,24 +137,20 @@ impl Connection {
             session_id,
             sink,
             sent: HashSet::new(),
-            floor: 0,
+            floor: established.replay_after,
         };
-
-        let welcome = match conn.welcome(&hello, &established).await {
+        let welcome = match session::welcome(&state, &established).await {
             Ok(w) => w,
-            Err(error) => {
-                tracing::error!(%error, %session_id, "no se pudo preparar welcome");
+            Err(e) => {
+                tracing::error!(error = %e, %session_id, "no se pudo preparar welcome");
                 close(&mut conn.sink, CLOSE_UNAVAILABLE, "servicio no disponible").await;
                 return;
             }
         };
-        let client_last_seq = if established.resumed {
-            hello.resume.as_ref().map_or(0, |r| r.last_seq)
-        } else {
-            0
-        };
-        conn.floor = client_last_seq;
-        if send_control(&mut conn.sink, welcome).await.is_err() {
+        if send_control(&mut conn.sink, ServerControl::Welcome(welcome))
+            .await
+            .is_err()
+        {
             return;
         }
         // 3. reenviar lo que falte
@@ -231,8 +160,9 @@ impl Connection {
         state.records.record(
             RecordEvent::new(EventKind::ConnectionOpened, producer(&state))
                 .session(session_id)
+                .attr("transport", "websocket")
                 .attr("resumed", established.resumed)
-                .attr("client_last_seq", client_last_seq),
+                .attr("client_last_seq", established.replay_after),
         );
 
         // 4. bucle principal
@@ -240,56 +170,13 @@ impl Connection {
         state.records.record(
             RecordEvent::new(EventKind::ConnectionClosed, producer(&state))
                 .session(session_id)
+                .attr("transport", "websocket")
                 .attr("reason", reason)
                 .attr(
                     "duration_ms",
                     u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
                 ),
         );
-    }
-
-    async fn welcome(
-        &mut self,
-        hello: &Hello,
-        est: &Established,
-    ) -> Result<ServerControl, crate::valkey::ValkeyError> {
-        let fields = self.state.store.session_fields(self.session_id).await?;
-        let latest_seq = self.state.store.latest_seq(self.session_id).await?;
-        let incident = match (
-            fields.get("incident_id").and_then(|v| v.parse().ok()),
-            fields
-                .get("channel")
-                .and_then(|c| serde_json::from_value(serde_json::Value::String(c.clone())).ok()),
-        ) {
-            (Some(incident_id), Some(channel)) => Some(IncidentSummary {
-                incident_id,
-                channel,
-                status: fields
-                    .get("incident_status")
-                    .and_then(|s| serde_json::from_value(serde_json::Value::String(s.clone())).ok())
-                    .unwrap_or(IncidentState::Received),
-            }),
-            _ => None,
-        };
-        let ttl_ms = fields
-            .get("ttl_ms")
-            .and_then(|v| v.parse::<i64>().ok())
-            .unwrap_or(0);
-        let now = Timestamp::now();
-        let _ = hello;
-        Ok(ServerControl::Welcome(Welcome {
-            protocol_version: PROTOCOL_VERSION,
-            session_id: self.session_id,
-            session_token: est.token.clone(),
-            token_expires_at: Timestamp::from_unix_millis(now.unix_millis() + ttl_ms)
-                .unwrap_or(now),
-            resumed: est.resumed,
-            entry: est.entry,
-            heartbeat_interval_ms: HEARTBEAT_INTERVAL_MS,
-            latest_seq,
-            incident,
-            server_ts: now,
-        }))
     }
 
     async fn main_loop(
@@ -307,8 +194,18 @@ impl Connection {
                 incoming = stream.next() => match incoming {
                     Some(Ok(Message::Text(text))) => {
                         last_activity = Instant::now();
-                        if let Err(reason) = self.on_text(&text).await {
-                            return reason;
+                        match session::handle_command(&self.state, self.session_id, &text).await {
+                            CommandReply::Reply(reply) => {
+                                if send_control(&mut self.sink, reply).await.is_err() { return "send_failed"; }
+                            }
+                            CommandReply::Nothing => {}
+                            CommandReply::SessionGone(reply) => {
+                                // La sesión expiró con la conexión abierta: el
+                                // cliente hace hello de nuevo y reenvía lo pendiente.
+                                let _ = send_control(&mut self.sink, reply).await;
+                                close(&mut self.sink, CLOSE_SESSION_GONE, "sesión expirada").await;
+                                return "session_gone";
+                            }
                         }
                     }
                     Some(Ok(Message::Binary(_))) => {
@@ -358,480 +255,21 @@ impl Connection {
 
     /// Envía todo lo que exista en Valkey por encima de `floor`.
     async fn catch_up(&mut self) -> Result<(), axum::Error> {
-        let latest = match self.state.store.latest_seq(self.session_id).await {
-            Ok(latest) => latest,
+        let Ok(latest) = self.state.store.latest_seq(self.session_id).await else {
             // Si Valkey no responde, se intentará en la siguiente vuelta.
-            Err(_) => return Ok(()),
+            return Ok(());
         };
         if latest <= self.floor {
             return Ok(());
         }
-        let frames = match self.state.store.replay(self.session_id, self.floor).await {
-            Ok(frames) => frames,
-            Err(_) => return Ok(()),
+        let Ok(frames) = self.state.store.replay(self.session_id, self.floor).await else {
+            return Ok(());
         };
         for (seq, frame) in frames {
             self.send_frame(seq, &frame).await?;
         }
         Ok(())
     }
-
-    async fn on_text(&mut self, text: &str) -> Result<(), &'static str> {
-        if text.len() > MAX_CLIENT_FRAME_BYTES {
-            return self
-                .reply(error(
-                    ErrorCode::MessageTooLarge,
-                    "mensaje demasiado grande".into(),
-                    None,
-                    false,
-                ))
-                .await;
-        }
-        let mut message: ClientMessage = match serde_json::from_str(text) {
-            Ok(m) => m,
-            Err(e) => {
-                let client_msg_id = extract_client_msg_id(text);
-                self.record_protocol_error("parse", format!("{:?}", e.classify()), client_msg_id);
-                return self
-                    .reply(error(
-                        ErrorCode::InvalidMessage,
-                        "mensaje no válido".into(),
-                        client_msg_id,
-                        false,
-                    ))
-                    .await;
-            }
-        };
-        let dropped = message.sanitize();
-        if !dropped.is_empty() {
-            self.state.records.record(
-                RecordEvent::new(EventKind::FieldsDropped, producer(&self.state))
-                    .session(self.session_id)
-                    .attr("message_type", message.kind())
-                    .attr("client_msg_id", message.client_msg_id().to_string())
-                    .attr("fields", dropped),
-            );
-        }
-        let cmid = message.client_msg_id();
-        if let Err(invalid) = message.validate() {
-            self.record_protocol_error("validation", invalid.to_string(), Some(cmid));
-            return self
-                .reply(error(
-                    ErrorCode::InvalidMessage,
-                    invalid.to_string(),
-                    Some(cmid),
-                    false,
-                ))
-                .await;
-        }
-
-        match &message {
-            ClientMessage::Hello(_) => {
-                self.reply(error(
-                    ErrorCode::InvalidMessage,
-                    "hello duplicado".into(),
-                    Some(cmid),
-                    false,
-                ))
-                .await
-            }
-            ClientMessage::Ping(_) => {
-                let _ = self.state.store.touch(self.session_id).await;
-                self.reply(ServerControl::Pong(Pong {
-                    client_msg_id: cmid,
-                    server_ts: Timestamp::now(),
-                }))
-                .await
-            }
-            ClientMessage::Ack(ack) => {
-                let _ = self
-                    .state
-                    .store
-                    .set_fields(self.session_id, &[("last_ack_seq", ack.seq.to_string())])
-                    .await;
-                self.state.records.record(
-                    RecordEvent::new(EventKind::ClientAck, producer(&self.state))
-                        .session(self.session_id)
-                        .client_ts(ack.client_ts)
-                        .attr("seq", ack.seq),
-                );
-                Ok(())
-            }
-            _ => self.accept(message).await,
-        }
-    }
-
-    /// Acepta un comando de forma durable y responde `ack`.
-    async fn accept(&mut self, message: ClientMessage) -> Result<(), &'static str> {
-        let cmid = message.client_msg_id();
-        let now = Timestamp::now();
-        let forward = !matches!(message, ClientMessage::ClientEvent(_));
-        let echo = match &message {
-            ClientMessage::ChatMessage(m) => Some(ServerEvent::ChatMessage(ServerChatMessage {
-                message_id: Uuid::new_v5(&ID_NAMESPACE, cmid.as_bytes()),
-                author: Author::Citizen,
-                kind: m.kind,
-                text: m.text.clone(),
-                quick_reply: m.quick_reply,
-                client_msg_id: Some(cmid),
-                server_ts: now,
-            })),
-            _ => None,
-        };
-        let json = match serde_json::to_string(&message) {
-            Ok(json) => json,
-            Err(_) => {
-                return self
-                    .reply(error(
-                        ErrorCode::Internal,
-                        "error interno".into(),
-                        Some(cmid),
-                        true,
-                    ))
-                    .await;
-            }
-        };
-
-        // El registro del comando se escribe en la MISMA operación atómica que
-        // lo acepta: no puede existir uno sin el otro.
-        let records = match self.accepted_record(&message) {
-            Some(event) => self.state.records.encode_all(vec![event]).await,
-            None => Vec::new(),
-        };
-        let outcome = self
-            .state
-            .store
-            .accept(
-                self.session_id,
-                AcceptCommand {
-                    client_msg_id: cmid,
-                    message_json: &json,
-                    now_ms: now.unix_millis(),
-                    forward,
-                    echo: echo.as_ref(),
-                    records: &records,
-                },
-            )
-            .await;
-        match outcome {
-            Ok(AcceptOutcome::Accepted { .. }) => {
-                if forward {
-                    forwarder::kick(&self.state, self.session_id);
-                }
-                self.reply(ServerControl::Ack(ServerAck {
-                    client_msg_id: cmid,
-                    status: AckStatus::Accepted,
-                    server_ts: now,
-                }))
-                .await
-            }
-            Ok(AcceptOutcome::Duplicate) => {
-                self.reply(ServerControl::Ack(ServerAck {
-                    client_msg_id: cmid,
-                    status: AckStatus::Duplicate,
-                    server_ts: now,
-                }))
-                .await
-            }
-            Ok(AcceptOutcome::SessionMissing) => {
-                // La sesión expiró con la conexión abierta: el cliente debe
-                // hacer hello de nuevo y reenviar lo que no tenga ack.
-                let _ = self
-                    .reply(error(
-                        ErrorCode::Internal,
-                        "la sesión expiró".into(),
-                        Some(cmid),
-                        true,
-                    ))
-                    .await;
-                close(&mut self.sink, CLOSE_SESSION_GONE, "sesión expirada").await;
-                Err("session_gone")
-            }
-            Err(e) => {
-                // Sin ack: el cliente conserva el mensaje en su cola y lo reintenta.
-                tracing::error!(error = %e, session_id = %self.session_id, "no se pudo aceptar un comando");
-                self.reply(error(
-                    ErrorCode::Internal,
-                    "no se pudo guardar; reintenta".into(),
-                    Some(cmid),
-                    true,
-                ))
-                .await
-            }
-        }
-    }
-
-    /// Evento de registro de un comando aceptado (con su contenido).
-    fn accepted_record(&self, message: &ClientMessage) -> Option<RecordEvent> {
-        let state = &self.state;
-        let cmid = message.client_msg_id().to_string();
-        let event = match message {
-            ClientMessage::CreateIncident(m) => {
-                RecordEvent::new(EventKind::IncidentRequested, producer(state))
-                    .client_ts(m.client_ts)
-                    .trace(m.traceparent.as_deref())
-                    .attr("channel", m.channel.as_str())
-                    .attr("language", m.language.clone())
-            }
-            ClientMessage::ChatMessage(m) => {
-                RecordEvent::new(EventKind::CitizenMessage, producer(state))
-                    .client_ts(m.client_ts)
-                    .trace(m.traceparent.as_deref())
-                    .attr("kind", serde_json::to_value(m.kind).unwrap_or_default())
-                    .attr(
-                        "quick_reply",
-                        serde_json::to_value(m.quick_reply).unwrap_or_default(),
-                    )
-                    // Valkey sustituye el marcador por el seq real del eco.
-                    .attr("seq", SEQ_PLACEHOLDER)
-                    .sensitive(SensitivePayload::Message {
-                        text: m.text.clone(),
-                    })
-            }
-            ClientMessage::LocationUpdate(m) => {
-                RecordEvent::new(EventKind::LocationReceived, producer(state))
-                    .client_ts(m.client_ts)
-                    .trace(m.traceparent.as_deref())
-                    .attr("source", serde_json::to_value(m.source).unwrap_or_default())
-                    .sensitive(location_payload(m))
-            }
-            ClientMessage::VideoCallRequest(m) => {
-                RecordEvent::new(EventKind::VideoCallRequested, producer(state))
-                    .client_ts(m.client_ts)
-                    .trace(m.traceparent.as_deref())
-                    .attr("stage", "received")
-            }
-            ClientMessage::ClientEvent(m) => {
-                RecordEvent::new(EventKind::ClientEvent, producer(state))
-                    .client_ts(m.client_ts)
-                    .trace(m.traceparent.as_deref())
-                    .attr("event", serde_json::to_value(m.kind).unwrap_or_default())
-                    .attr("detail", m.detail.clone())
-            }
-            ClientMessage::Close(m) => RecordEvent::new(EventKind::ClientEvent, producer(state))
-                .client_ts(m.client_ts)
-                .attr("event", "close_requested")
-                .attr("detail", serde_json::to_value(m.reason).unwrap_or_default()),
-            ClientMessage::Hello(_) | ClientMessage::Ack(_) | ClientMessage::Ping(_) => {
-                return None;
-            }
-        };
-        Some(event.session(self.session_id).attr("client_msg_id", cmid))
-    }
-
-    fn record_protocol_error(&self, stage: &str, reason: String, client_msg_id: Option<Uuid>) {
-        self.state.records.record(
-            RecordEvent::new(EventKind::ProtocolError, producer(&self.state))
-                .session(self.session_id)
-                .attr("stage", stage)
-                .attr("reason", reason)
-                .attr("client_msg_id", client_msg_id.map(|id| id.to_string())),
-        );
-    }
-
-    async fn reply(&mut self, message: ServerControl) -> Result<(), &'static str> {
-        send_control(&mut self.sink, message)
-            .await
-            .map_err(|_| "send_failed")
-    }
-}
-
-struct Established {
-    session_id: Uuid,
-    token: String,
-    resumed: bool,
-    entry: EntryVerification,
-}
-
-async fn establish_session(
-    state: &Arc<AppState>,
-    hello: &Hello,
-    network: &NetworkInfo,
-) -> Result<Established, Box<dyn std::error::Error + Send + Sync>> {
-    let token = token::generate()?;
-    let token_hash = token::hash(&token);
-    let now = Timestamp::now();
-
-    if let Some(resume) = &hello.resume {
-        // Los registros de la reanudación se escriben solo si se reanuda
-        // (dentro del mismo script).
-        let records = state
-            .records
-            .encode_all(vec![
-                RecordEvent::new(EventKind::SessionResumed, producer(state))
-                    .session(resume.session_id)
-                    .client_ts(hello.client_ts)
-                    .attr("client_last_seq", resume.last_seq),
-                metadata_event(state, resume.session_id, hello, network),
-            ])
-            .await;
-        let outcome = state
-            .store
-            .resume_session(
-                resume.session_id,
-                &token::hash(&resume.session_token),
-                &token_hash,
-                &records,
-            )
-            .await?;
-        if let ResumeOutcome::Resumed { .. } = outcome {
-            let entry = state
-                .store
-                .session_fields(resume.session_id)
-                .await?
-                .get("entry_status")
-                .map(|s| match s.as_str() {
-                    "verified" => EntryVerification::Verified,
-                    "unverified" => EntryVerification::Unverified,
-                    _ => EntryVerification::None,
-                })
-                .unwrap_or(EntryVerification::None);
-            return Ok(Established {
-                session_id: resume.session_id,
-                token,
-                resumed: true,
-                entry,
-            });
-        }
-        state.records.record(
-            RecordEvent::new(EventKind::SessionResumeRejected, producer(state))
-                .attr("requested_session_id", resume.session_id.to_string())
-                .attr("reason", format!("{outcome:?}").to_lowercase()),
-        );
-    }
-
-    let session_id = Uuid::now_v7();
-    let entry = state.qr.verify(hello.entry.as_ref());
-    let point_id = hello
-        .entry
-        .as_ref()
-        .map(|e| e.point_id.clone())
-        .unwrap_or_default();
-    let key = state.records.new_session_key(session_id)?;
-    let fields = vec![
-        ("entry_point", point_id.clone()),
-        ("entry_status", entry.as_str().to_owned()),
-        ("language", hello.language.clone()),
-        ("app_version", hello.app_version.clone()),
-        ("protocol_version", hello.protocol_version.to_string()),
-        ("dek", key.operational_wrapped),
-    ];
-    // La llave de la sesión va primero: todo lo demás se cifra con ella.
-    let records = state
-        .records
-        .encode_all(vec![
-            key.event,
-            RecordEvent::new(EventKind::SessionStarted, producer(state))
-                .session(session_id)
-                .client_ts(hello.client_ts),
-            RecordEvent::new(EventKind::EntryPoint, producer(state))
-                .session(session_id)
-                .attr("source", if hello.entry.is_some() { "qr" } else { "web" })
-                .attr("point_id", point_id)
-                .attr(
-                    "key_id",
-                    hello.entry.as_ref().and_then(|e| e.key_id.clone()),
-                )
-                .attr("verification", entry.as_str()),
-            metadata_event(state, session_id, hello, network),
-        ])
-        .await;
-    state
-        .store
-        .create_session(
-            session_id,
-            &token_hash,
-            now.unix_millis(),
-            state.config.sessions.idle_ttl,
-            &fields,
-            &records,
-        )
-        .await?;
-    Ok(Established {
-        session_id,
-        token,
-        resumed: false,
-        entry,
-    })
-}
-
-/// Metadatos técnicos del cliente. La IP y el user agent van cifrados.
-fn metadata_event(
-    state: &Arc<AppState>,
-    session_id: Uuid,
-    hello: &Hello,
-    network: &NetworkInfo,
-) -> RecordEvent {
-    RecordEvent::new(EventKind::ClientMetadata, producer(state))
-        .session(session_id)
-        .client_ts(hello.client_ts)
-        .trace(hello.traceparent.as_deref())
-        .attr("language", hello.language.clone())
-        .attr("app_version", hello.app_version.clone())
-        .attr("protocol_version", hello.protocol_version)
-        .attr(
-            "accessibility",
-            serde_json::to_value(&hello.accessibility).unwrap_or_default(),
-        )
-        .sensitive(SensitivePayload::Network {
-            ip: network.ip.clone(),
-            user_agent: network.user_agent.clone(),
-        })
-}
-
-type HelloError = (ErrorCode, String, Option<Uuid>);
-
-fn parse_hello(text: &str) -> Result<(Hello, Vec<&'static str>), HelloError> {
-    let mut message: ClientMessage = serde_json::from_str(text).map_err(|_| {
-        (
-            ErrorCode::InvalidMessage,
-            "hello no válido".to_owned(),
-            extract_client_msg_id(text),
-        )
-    })?;
-    let dropped = message.sanitize();
-    message.validate().map_err(|e| {
-        (
-            ErrorCode::InvalidMessage,
-            e.to_string(),
-            Some(message.client_msg_id()),
-        )
-    })?;
-    match message {
-        ClientMessage::Hello(hello) => Ok((hello, dropped)),
-        other => Err((
-            ErrorCode::HelloRequired,
-            "el primer mensaje debe ser hello".into(),
-            Some(other.client_msg_id()),
-        )),
-    }
-}
-
-/// Intenta recuperar el `client_msg_id` de un JSON inválido para que el
-/// cliente sepa a qué mensaje corresponde el error.
-fn extract_client_msg_id(text: &str) -> Option<Uuid> {
-    serde_json::from_str::<serde_json::Value>(text)
-        .ok()?
-        .get("client_msg_id")?
-        .as_str()?
-        .parse()
-        .ok()
-}
-
-fn error(
-    code: ErrorCode,
-    message: String,
-    client_msg_id: Option<Uuid>,
-    retryable: bool,
-) -> ServerControl {
-    ServerControl::Error(ServerError {
-        code,
-        message,
-        client_msg_id,
-        retryable,
-        supported_versions: None,
-        server_ts: Timestamp::now(),
-    })
 }
 
 async fn send_control(sink: &mut Sink, message: ServerControl) -> Result<(), axum::Error> {
@@ -846,41 +284,4 @@ async fn close(sink: &mut Sink, code: u16, reason: &'static str) {
             reason: Utf8Bytes::from_static(reason),
         })))
         .await;
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn origin_rules() {
-        let allowed = vec!["https://sinbarreras.zapopan.gob.mx".to_owned()];
-        assert!(origin_allowed(&allowed, None));
-        assert!(origin_allowed(
-            &allowed,
-            Some("https://sinbarreras.zapopan.gob.mx")
-        ));
-        assert!(!origin_allowed(&allowed, Some("https://evil.example")));
-        assert!(origin_allowed(
-            &["*".to_owned()],
-            Some("http://localhost:5173")
-        ));
-    }
-
-    #[test]
-    fn client_ip_prefers_rightmost_forwarded_for() {
-        let mut headers = HeaderMap::new();
-        headers.insert("x-forwarded-for", "1.1.1.1, 203.0.113.9".parse().unwrap());
-        let peer: SocketAddr = "10.0.0.5:4000".parse().unwrap();
-        assert_eq!(client_ip(&headers, peer), "203.0.113.9");
-        assert_eq!(client_ip(&HeaderMap::new(), peer), "10.0.0.5");
-    }
-
-    #[test]
-    fn extracts_client_msg_id_from_invalid_message() {
-        let id = Uuid::new_v4();
-        let raw = format!(r#"{{"type":"desconocido","client_msg_id":"{id}"}}"#);
-        assert_eq!(extract_client_msg_id(&raw), Some(id));
-        assert_eq!(extract_client_msg_id("no json"), None);
-    }
 }
