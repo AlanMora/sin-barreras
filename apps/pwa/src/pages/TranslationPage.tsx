@@ -1,3 +1,4 @@
+import { ChevronRight, Globe } from 'lucide-preact';
 import { useLocation } from 'preact-iso';
 import { PageTitle } from '../components/ui';
 import { t } from '../i18n';
@@ -27,8 +28,18 @@ export function TranslationPage() {
   };
   return (
     <>
-      <PageTitle documentTitle={t('translation.title')}>{t('translation.title')}</PageTitle>
-      <p class="text-lg text-muted">{t('translation.hint')}</p>
+      <div class="flex items-start gap-4">
+        <span
+          aria-hidden="true"
+          class="grid h-14 w-14 shrink-0 place-items-center rounded-2xl sb-tint-4"
+        >
+          <Globe size={28} />
+        </span>
+        <div class="flex flex-col gap-1">
+          <PageTitle documentTitle={t('translation.title')}>{t('translation.title')}</PageTitle>
+          <p class="text-lg text-muted">{t('translation.hint')}</p>
+        </div>
+      </div>
       <ul class="grid grid-cols-2 gap-3">
         {LANGUAGES.map((lang) => (
           <li key={lang.code}>
@@ -36,9 +47,10 @@ export function TranslationPage() {
               type="button"
               lang={lang.code}
               onClick={() => choose(lang.code)}
-              class="min-h-touch w-full rounded-card border-2 border-line bg-surface p-4 text-left text-xl font-extrabold"
+              class="flex min-h-[4rem] w-full items-center justify-between gap-2 rounded-card border-2 border-line-soft bg-surface px-4 py-3 text-left text-lg font-extrabold shadow-card transition-colors hover:border-line"
             >
-              {lang.name}
+              <span class="min-w-0 break-words">{lang.name}</span>
+              <ChevronRight size={20} aria-hidden="true" class="shrink-0 text-muted" />
             </button>
           </li>
         ))}

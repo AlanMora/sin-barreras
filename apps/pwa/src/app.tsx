@@ -14,7 +14,11 @@ function Shell() {
   const { path } = useLocation();
   // La pantalla neutral no muestra nada del programa.
   return (
-    <Layout minimal={path === '/clima'}>
+    <Layout
+      minimal={path === '/clima'}
+      home={path === '/'}
+      conversation={path === '/chat' || path === '/silencioso' || path === '/llamada'}
+    >
       <Router>
         <Route path="/" component={Home} />
         <Route path="/chat" component={ChatPage} />

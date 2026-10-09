@@ -21,7 +21,7 @@ export function ChatPage() {
       <IncidentStatus />
       <LocationNotice />
       <section aria-label={t('chat.log')} class="flex flex-1 flex-col gap-3">
-        <MessageList />
+        <MessageList suggestions />
       </section>
       <Composer />
     </>

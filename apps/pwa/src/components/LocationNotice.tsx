@@ -8,16 +8,16 @@ export function LocationNotice() {
   const status = locationStatus.value;
   if (status === 'sharing') {
     return (
-      <p class="flex items-center gap-2 text-sm text-muted">
-        <MapPin size={18} />
+      <p class="inline-flex items-center gap-2 self-start rounded-full bg-success-soft px-3 py-1.5 text-sm font-bold text-success">
+        <MapPin size={16} aria-hidden="true" />
         {t('location.shared')}
       </p>
     );
   }
   if (status === 'denied' || status === 'unavailable') {
     return (
-      <Notice icon={<MapPin size={22} />}>
-        <p>{t('location.denied')}</p>
+      <Notice icon={<MapPin size={20} />}>
+        <p class="font-bold">{t('location.denied')}</p>
         {entryVerification.value !== 'none' ? (
           <p class="mt-1 text-sm text-muted">{t('location.qr')}</p>
         ) : null}

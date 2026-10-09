@@ -20,95 +20,167 @@
 /*
  * Sistema de diseño de Sin Barreras.
  *
- * Los componentes usan SOLO tokens semánticos (bg, fg, accent…). Las tres
- * paletas —normal, alto contraste y modo silencioso— redefinen esos tokens.
- * Contrastes verificados (WCAG 2.1 AA; texto ≥ 4.5:1, componentes ≥ 3:1):
+ * Los componentes usan SOLO tokens semánticos. Las tres paletas (normal, alto
+ * contraste y modo silencioso) redefinen los tokens. Contrastes calculados para
+ * todas las combinaciones usadas (WCAG 2.1 AA): texto ≥ 4.5:1, componentes y
+ * gráficos ≥ 3:1. Mínimos: normal 4.52 · alto contraste 10.6 · silencioso 3.14.
  *
- *   normal   texto 15.4 · secundario 5.4 · botón primario 15.4 · acento 5.6 · borde 4.4
- *   alto     texto 21.0 · acento 14.7 · peligro 10.6
- *   silente  texto 11.5 · secundario 7.0 · botones 7.9 · borde 3.2
- *
- * Nunca usar naranja #f47b20 con texto blanco (2.73:1).
+ * Nunca usar el naranja #f47b20 con texto blanco (2.73:1).
  */
 :root {
-  --sb-bg: #ffffff;
-  --sb-surface: #f3f6fb;
+  --sb-bg: #f3f6fb;
+  --sb-surface: #ffffff;
+  --sb-surface-2: #eef2f8;
   --sb-fg: #0b2545;
-  --sb-muted: #5b6b82;
+  --sb-muted: #56657c;
   --sb-border: #66788f;
+  --sb-border-soft: #dde4ee;
   --sb-primary: #0b2545;
   --sb-on-primary: #ffffff;
   --sb-accent: #f47b20;
   --sb-on-accent: #0b2545;
   --sb-accent-text: #b54708;
-  --sb-danger: #b42318;
   --sb-success: #067647;
+  --sb-success-soft: #e3f5ec;
+  --sb-danger: #b42318;
+  --sb-danger-soft: #fdecea;
+  --sb-warning-soft: #fff4e5;
   --sb-focus: #f47b20;
   --sb-focus-ring: #0b2545;
   --sb-mark: #f47b20;
+  --sb-hero-from: #0b2545;
+  --sb-hero-to: #1d4278;
+  --sb-hero-fg: #ffffff;
+  --sb-hero-muted: #c9d6ea;
+  --sb-hero-glow: rgb(244 123 32 / 0.45);
+  --sb-shadow: 0 1px 2px rgb(11 37 69 / 0.06), 0 4px 16px rgb(11 37 69 / 0.06);
+  --sb-shadow-lg: 0 10px 30px rgb(11 37 69 / 0.14);
+  --sb-tint-1: #fff0e3;
+  --sb-tint-1-fg: #b54708;
+  --sb-tint-2: #e8eef8;
+  --sb-tint-2-fg: #0b2545;
+  --sb-tint-3: #e3f5ec;
+  --sb-tint-3-fg: #067647;
+  --sb-tint-4: #efeafd;
+  --sb-tint-4-fg: #5b3cc4;
+  --sb-tint-5: #eceff4;
+  --sb-tint-5-fg: #334155;
   color-scheme: light;
 }
 
 :root[data-contrast="high"] {
   --sb-bg: #000000;
   --sb-surface: #000000;
+  --sb-surface-2: #000000;
   --sb-fg: #ffffff;
   --sb-muted: #ffffff;
   --sb-border: #ffffff;
+  --sb-border-soft: #ffffff;
   --sb-primary: #ffffff;
   --sb-on-primary: #000000;
   --sb-accent: #ffd400;
   --sb-on-accent: #000000;
   --sb-accent-text: #ffd400;
-  --sb-danger: #ff9e9e;
   --sb-success: #7cfc8a;
+  --sb-success-soft: #000000;
+  --sb-danger: #ff9e9e;
+  --sb-danger-soft: #000000;
+  --sb-warning-soft: #000000;
   --sb-focus: #ffd400;
   --sb-focus-ring: #000000;
   --sb-mark: #ffd400;
+  --sb-hero-from: #000000;
+  --sb-hero-to: #000000;
+  --sb-hero-fg: #ffffff;
+  --sb-hero-muted: #ffffff;
+  --sb-hero-glow: transparent;
+  --sb-shadow: none;
+  --sb-shadow-lg: none;
+  --sb-tint-1: #000000;
+  --sb-tint-1-fg: #ffd400;
+  --sb-tint-2: #000000;
+  --sb-tint-2-fg: #ffffff;
+  --sb-tint-3: #000000;
+  --sb-tint-3-fg: #7cfc8a;
+  --sb-tint-4: #000000;
+  --sb-tint-4-fg: #d6c8ff;
+  --sb-tint-5: #000000;
+  --sb-tint-5-fg: #ffffff;
   color-scheme: dark;
 }
 
 /* Modo silencioso: oscuro y discreto (poca luz), pero legible. */
 :root[data-mode="silent"]:not([data-contrast="high"]) {
-  --sb-bg: #0f1318;
-  --sb-surface: #181d24;
-  --sb-fg: #c3ccd6;
-  --sb-muted: #93a0ae;
-  --sb-border: #5a6674;
-  --sb-primary: #3a4552;
-  --sb-on-primary: #e3e8ee;
-  --sb-accent: #3a4552;
-  --sb-on-accent: #e3e8ee;
-  --sb-accent-text: #c3ccd6;
+  --sb-bg: #0d1117;
+  --sb-surface: #161b22;
+  --sb-surface-2: #1f2630;
+  --sb-fg: #c9d1d9;
+  --sb-muted: #97a3b1;
+  --sb-border: #66737f;
+  --sb-border-soft: #2a313b;
+  --sb-primary: #384455;
+  --sb-on-primary: #e6ebf1;
+  --sb-accent: #384455;
+  --sb-on-accent: #e6ebf1;
+  --sb-accent-text: #c9d1d9;
+  --sb-success: #7ec698;
+  --sb-success-soft: #1f2630;
   --sb-danger: #f09a92;
-  --sb-success: #86c79a;
-  --sb-focus: #c3ccd6;
-  --sb-focus-ring: #0f1318;
-  --sb-mark: #93a0ae;
+  --sb-danger-soft: #1f2630;
+  --sb-warning-soft: #1f2630;
+  --sb-focus: #c9d1d9;
+  --sb-focus-ring: #0d1117;
+  --sb-mark: #97a3b1;
+  --sb-hero-from: #161b22;
+  --sb-hero-to: #161b22;
+  --sb-hero-fg: #e6ebf1;
+  --sb-hero-muted: #a9b4c2;
+  --sb-hero-glow: transparent;
+  --sb-shadow: none;
+  --sb-shadow-lg: none;
+  --sb-tint-1: #1f2630;
+  --sb-tint-1-fg: #c9d1d9;
+  --sb-tint-2: #1f2630;
+  --sb-tint-2-fg: #c9d1d9;
+  --sb-tint-3: #1f2630;
+  --sb-tint-3-fg: #c9d1d9;
+  --sb-tint-4: #1f2630;
+  --sb-tint-4-fg: #c9d1d9;
+  --sb-tint-5: #1f2630;
+  --sb-tint-5-fg: #c9d1d9;
   color-scheme: dark;
 }
 
 @theme inline {
   --color-bg: var(--sb-bg);
   --color-surface: var(--sb-surface);
+  --color-surface-2: var(--sb-surface-2);
   --color-fg: var(--sb-fg);
   --color-muted: var(--sb-muted);
   --color-line: var(--sb-border);
+  --color-line-soft: var(--sb-border-soft);
   --color-primary: var(--sb-primary);
   --color-on-primary: var(--sb-on-primary);
   --color-accent: var(--sb-accent);
   --color-on-accent: var(--sb-on-accent);
   --color-accent-text: var(--sb-accent-text);
   --color-danger: var(--sb-danger);
+  --color-danger-soft: var(--sb-danger-soft);
   --color-success: var(--sb-success);
+  --color-success-soft: var(--sb-success-soft);
+  --color-warning-soft: var(--sb-warning-soft);
   --color-mark: var(--sb-mark);
+  --color-hero-fg: var(--sb-hero-fg);
+  --color-hero-muted: var(--sb-hero-muted);
+  --shadow-card: var(--sb-shadow);
+  --shadow-float: var(--sb-shadow-lg);
 }
 
 @theme {
   --font-display: "Nunito Variable", ui-rounded, "SF Pro Rounded", system-ui, sans-serif;
   --font-sans:
     "Nunito Variable", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-  --radius-card: 1.25rem;
+  --radius-card: 1.5rem;
   --radius-button: 1rem;
   /* Objetivo táctil mínimo exigido por el proyecto (48 px). */
   --spacing-touch: 3rem;
@@ -119,6 +191,7 @@
     -webkit-text-size-adjust: 100%;
     text-size-adjust: 100%;
     background: var(--sb-bg);
+    -webkit-tap-highlight-color: transparent;
   }
 
   body {
@@ -131,7 +204,7 @@
     outline: 3px solid var(--sb-focus);
     outline-offset: 3px;
     box-shadow: 0 0 0 6px var(--sb-focus-ring);
-    border-radius: 0.5rem;
+    border-radius: 0.75rem;
   }
 
   /* El foco que se mueve por programa (títulos, contenido principal) no
@@ -156,6 +229,65 @@
 }
 
 @layer components {
+  /* Tarjeta base. */
+  .sb-card {
+    background: var(--sb-surface);
+    border: 1px solid var(--sb-border-soft);
+    border-radius: var(--radius-card);
+    box-shadow: var(--sb-shadow);
+  }
+
+  /* Encabezado destacado (héroe) con degradado institucional. */
+  .sb-hero {
+    position: relative;
+    overflow: hidden;
+    color: var(--sb-hero-fg);
+    background: linear-gradient(135deg, var(--sb-hero-from) 0%, var(--sb-hero-to) 100%);
+    border-radius: 1.75rem;
+    isolation: isolate;
+  }
+  .sb-hero::after {
+    content: "";
+    position: absolute;
+    inset: auto -20% -55% auto;
+    width: 70%;
+    aspect-ratio: 1;
+    border-radius: 9999px;
+    background: radial-gradient(circle, var(--sb-hero-glow) 0%, transparent 65%);
+    z-index: -1;
+  }
+
+  /* Mosaicos de color por canal. */
+  .sb-tint-1 {
+    background: var(--sb-tint-1);
+    color: var(--sb-tint-1-fg);
+  }
+  .sb-tint-2 {
+    background: var(--sb-tint-2);
+    color: var(--sb-tint-2-fg);
+  }
+  .sb-tint-3 {
+    background: var(--sb-tint-3);
+    color: var(--sb-tint-3-fg);
+  }
+  .sb-tint-4 {
+    background: var(--sb-tint-4);
+    color: var(--sb-tint-4-fg);
+  }
+  .sb-tint-5 {
+    background: var(--sb-tint-5);
+    color: var(--sb-tint-5-fg);
+  }
+  :root[data-contrast="high"] :is(.sb-tint-1, .sb-tint-2, .sb-tint-3, .sb-tint-4, .sb-tint-5) {
+    outline: 2px solid currentColor;
+    outline-offset: -2px;
+  }
+
+  .sb-call-link {
+    @apply inline-flex min-h-touch items-center justify-center gap-2 rounded-button bg-accent px-6 text-lg font-extrabold text-on-accent;
+    box-shadow: var(--sb-shadow);
+  }
+
   /* Radios y casillas propios: borde visible (≥ 3:1) en las tres paletas. */
   .sb-choice {
     appearance: none;
@@ -163,7 +295,7 @@
     width: 1.5rem;
     height: 1.5rem;
     border: 2px solid var(--sb-fg);
-    background: var(--sb-bg);
+    background: var(--sb-surface);
     display: grid;
     place-content: center;
   }
@@ -192,21 +324,124 @@
     transform: scale(1);
   }
 
-  .sb-call-link {
-    @apply inline-flex min-h-touch items-center justify-center rounded-button bg-accent px-6 text-lg font-extrabold text-on-accent;
+  /* Interruptor (casilla nativa con apariencia de switch). */
+  .sb-switch {
+    appearance: none;
+    position: relative;
+    flex-shrink: 0;
+    width: 3.25rem;
+    height: 2rem;
+    border-radius: 9999px;
+    border: 2px solid var(--sb-border);
+    background: var(--sb-surface-2);
+    transition: background-color 0.2s;
+  }
+  .sb-switch::before {
+    content: "";
+    position: absolute;
+    top: 0.1875rem;
+    left: 0.1875rem;
+    width: 1.375rem;
+    height: 1.375rem;
+    border-radius: 9999px;
+    background: var(--sb-fg);
+    transition: transform 0.2s;
+  }
+  .sb-switch:checked {
+    background: var(--sb-accent);
+    border-color: var(--sb-fg);
+  }
+  .sb-switch:checked::before {
+    transform: translateX(1.25rem);
+    background: var(--sb-on-accent);
+  }
+
+  /* Campo de texto: el contenedor muestra el foco (el control interno no). */
+  .sb-field:focus-within {
+    outline: 3px solid var(--sb-focus);
+    outline-offset: 2px;
+    border-color: var(--sb-fg);
+  }
+  .sb-field :focus-visible {
+    outline: none;
+    box-shadow: none;
+  }
+  :root[data-contrast="high"] .sb-hero {
+    outline: 2px solid var(--sb-fg);
+    outline-offset: -2px;
+  }
+
+  /* Opción seleccionable con aspecto de tarjeta (radio dentro de label). */
+  .sb-option {
+    @apply flex min-h-touch cursor-pointer items-center gap-3 rounded-2xl border-2 border-line-soft bg-surface px-4 py-3 transition-colors;
+  }
+  .sb-option:has(:checked) {
+    border-color: var(--sb-fg);
+    background: var(--sb-surface-2);
   }
 }
 
+/* --- Movimiento (CSS puro; desactivado con prefers-reduced-motion) ------- */
 @keyframes sb-pulse {
   0%,
   100% {
     opacity: 1;
   }
   50% {
-    opacity: 0.45;
+    opacity: 0.4;
   }
 }
-
 .sb-pulse {
   animation: sb-pulse 1.6s ease-in-out infinite;
+}
+
+/* Solo `transform`: el texto conserva su contraste completo desde el primer
+   cuadro (con `opacity` se leería poco contraste mientras entra). */
+@keyframes sb-rise {
+  from {
+    transform: translateY(10px) scale(0.985);
+  }
+  to {
+    transform: none;
+  }
+}
+.sb-rise {
+  animation: sb-rise 0.35s ease-out both;
+}
+
+@keyframes sb-ring {
+  0% {
+    transform: scale(0.85);
+    opacity: 0.6;
+  }
+  100% {
+    transform: scale(1.6);
+    opacity: 0;
+  }
+}
+.sb-ring::before,
+.sb-ring::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 9999px;
+  border: 2px solid currentColor;
+  animation: sb-ring 2s ease-out infinite;
+}
+.sb-ring::after {
+  animation-delay: 1s;
+}
+
+@keyframes sb-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.sb-spin {
+  animation: sb-spin 1s linear infinite;
+}
+
+/* Barra inferior fija respetando el área segura de iPhone. */
+.sb-safe-bottom {
+  padding-bottom: max(0.75rem, env(safe-area-inset-bottom));
 }

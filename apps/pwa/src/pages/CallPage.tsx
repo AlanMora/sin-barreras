@@ -1,10 +1,10 @@
-import { Phone, Video } from 'lucide-preact';
+import { MessageSquareText, Phone, RefreshCw, Video } from 'lucide-preact';
 import { useEffect, useRef } from 'preact/hooks';
 import { useLocation } from 'preact-iso';
 import { Composer, MessageList } from '../components/Chat';
 import { IncidentStatus } from '../components/IncidentStatus';
 import { LocationNotice } from '../components/LocationNotice';
-import { Button, Notice, PageTitle } from '../components/ui';
+import { Button, PageTitle } from '../components/ui';
 import { locale, t } from '../i18n';
 import { requestCall, requestHelp } from '../services';
 import { call } from '../state/conversation';
@@ -51,16 +51,28 @@ export function CallPage() {
 
   const title = media === 'audio' ? t('video.title_audio') : t('video.title_video');
   const status = current?.status ?? 'pending';
+  const waiting = status !== 'ready' && status !== 'failed' && status !== 'ended';
+  const tone =
+    status === 'failed'
+      ? 'border-danger bg-danger-soft'
+      : status === 'ready'
+        ? 'border-success bg-success-soft'
+        : 'border-line-soft bg-surface';
   return (
     <>
       <PageTitle documentTitle={`${title} · ${t('app.name')}`}>{title}</PageTitle>
       <IncidentStatus />
-      <Notice
-        tone={status === 'failed' ? 'warning' : status === 'ready' ? 'success' : 'info'}
-        icon={media === 'audio' ? <Phone size={22} /> : <Video size={22} />}
-        live
+      <div
+        role="status"
+        class={`sb-rise flex flex-col items-center gap-4 rounded-card border-2 px-4 py-6 text-center shadow-card ${tone}`}
       >
-        <p class="text-lg font-bold">
+        <span
+          aria-hidden="true"
+          class={`relative grid h-20 w-20 place-items-center rounded-full ${media === 'audio' ? 'sb-tint-3' : 'sb-tint-1'} ${waiting ? 'sb-ring' : ''}`}
+        >
+          {media === 'audio' ? <Phone size={34} /> : <Video size={34} />}
+        </span>
+        <p class="text-xl font-extrabold">
           {status === 'ready'
             ? t('video.ready')
             : status === 'failed'
@@ -69,15 +81,19 @@ export function CallPage() {
                 ? t('video.ended')
                 : t('video.requesting')}
         </p>
-        <div ref={container} class="mt-3" />
+        <div ref={container} />
         {status === 'failed' || status === 'ended' ? (
-          <Button variant="accent" class="mt-3" onClick={() => requestCall(media)}>
+          <Button variant="accent" onClick={() => requestCall(media)}>
+            <RefreshCw size={20} aria-hidden="true" />
             {title}
           </Button>
         ) : null}
-      </Notice>
+      </div>
       <LocationNotice />
-      <p class="font-bold">{t('video.chat_below')}</p>
+      <h2 class="flex items-center gap-2 font-display text-lg font-extrabold">
+        <MessageSquareText size={20} aria-hidden="true" />
+        {t('video.chat_below')}
+      </h2>
       <MessageList />
       <Composer />
     </>
