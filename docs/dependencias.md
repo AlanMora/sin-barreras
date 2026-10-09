@@ -24,6 +24,10 @@ dependencias transitivas.
 | `sha2`, `hmac`, `subtle` | bff | hash del token, firma HMAC de QR | RustCrypto, auditados |
 | `base64` | bff | codificación base64url | estándar |
 | `getrandom` | bff, c5-mock | aleatoriedad del sistema operativo para tokens y jitter | mínima; evita traer `rand` completo |
+| `hpke` | crypto | envolver la DEK hacia la llave pública de investigación (RFC 9180) | implementación del estándar, sin criptografía hecha a mano |
+| `aes-gcm` | crypto | AES-256-GCM del contenido | RustCrypto; la misma versión que ya usa `hpke` |
+| `zeroize` | crypto, bff | borrar llaves y texto en claro de la memoria | estándar de RustCrypto |
+| `sqlx` (rustls) | registry, record-writer, sb-admin | Postgres asíncrono + migraciones versionadas | indicado en el proyecto; TLS con el mismo stack |
 | `testcontainers-modules` | pruebas | Valkey/Postgres reales en pruebas de integración | exigido: pruebas con servicios reales |
 
 ## PWA (TypeScript)

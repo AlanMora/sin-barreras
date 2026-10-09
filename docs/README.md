@@ -7,4 +7,5 @@
 | [plan.md](plan.md) | Plan por fases y avance | Vivo |
 | [contrato-eventos.md](contrato-eventos.md) | Protocolo WebSocket PWA ↔ BFF | Vivo |
 | [dependencias.md](dependencias.md) | Dependencias y su justificación | Vivo |
-| `modelo-datos.md` | Modelo de datos del registro | Fase 2 |
+| [modelo-datos.md](modelo-datos.md) | Modelo de datos del registro, integridad y no pérdida | Vivo |
+| [llaves.md](llaves.md) | Gestión y rotación de llaves | Vivo |
