@@ -26,6 +26,23 @@ de `C5Gateway`. Mientras no haya respuesta, el BFF usa el simulador
 10. ¿Tienen ambiente de pruebas (sandbox) con datos ficticios?
 11. ¿Cuáles son sus límites de tasa y tiempos de respuesta esperados?
 
+## Lo que asume hoy el adaptador (ADR-0011)
+18. ¿Pueden aceptar una **llave de idempotencia** por operación (crear
+    incidente, mensaje, ubicación, videollamada)? Nuestro reintento tras la
+    caída de una réplica depende de ello.
+19. Si los eventos del C5 llegan por un canal persistente, ¿es posible
+    **reanudar desde un cursor** (último evento recibido) tras una desconexión?
+    ¿Pueden entregar el mismo evento a varias réplicas, o solo a una?
+20. ¿Cada evento del C5 trae un **identificador único** con el que podamos
+    descartar repetidos?
+21. ¿Hay una operación para que el ciudadano **termine la conversación** o
+    indique que ya está a salvo? ¿Y para avisar que **leyó** los mensajes del
+    operador?
+22. ¿El catálogo de canales (LSM, chat, audio, traducción, silencioso) existe
+    en el C5 o debemos mapearlo a sus tipos de incidente?
+23. ¿El C5 conoce las coordenadas de los puntos de entrada (tótems, escuelas)
+    por su identificador (`TOT-0142`), o debemos enviarlas nosotros?
+
 ## Sesiones no verificadas (ver ADR-0007)
 12. ¿Cómo debemos marcar un incidente cuyo QR no se pudo verificar para que el
     operador lo distinga sin dejar de atenderlo?

@@ -15,5 +15,9 @@ escribe uno nuevo que lo reemplaza y se marca el anterior como "Reemplazado".
 | [0007](0007-ninguna-validacion-bloquea-la-ayuda.md) | Ninguna validación bloquea la petición de ayuda | Aceptado |
 | [0008](0008-observabilidad-autoalojada.md) | Observabilidad autoalojada y trazas de la PWA sin SDK | Aceptado |
 | [0009](0009-imagenes-minimas.md) | Imágenes mínimas con healthcheck integrado en el binario | Aceptado |
+| [0010](0010-sesiones-anonimas.md) | Sesiones anónimas con token rotativo y vida deslizante | Aceptado |
+| [0011](0011-entrega-garantizada-al-c5.md) | Entrega garantizada y ordenada de mensajes al C5 | Aceptado |
+| [0012](0012-cliente-valkey-y-tls.md) | Cliente `fred` y `aws-lc-rs` como proveedor criptográfico | Aceptado |
+| [0013](0013-traefik-tambien-en-desarrollo.md) | Traefik también en desarrollo y BFF con 2 réplicas | Aceptado |
 
 Plantilla: copia [`0000-plantilla.md`](0000-plantilla.md).
