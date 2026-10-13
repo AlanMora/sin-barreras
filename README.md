@@ -59,7 +59,8 @@ docker compose --profile apps --profile observability up -d --build --wait
 | Servicio | URL local |
 |---|---|
 | PWA | http://localhost:8000 |
-| BFF | http://localhost:8000/api/health (a través de Traefik) |
+| BFF (réplicas 1 y 2) | http://localhost:18080/health y http://localhost:18081/health |
+| record-writer (réplicas 1 y 2) | http://localhost:18181/health y http://localhost:18182/health |
 | c5-mock | http://localhost:8090/health |
 | Grafana | http://localhost:3300 (perfil `observability`) |
 | Prometheus | http://localhost:9091 (perfil `observability`) |
@@ -67,9 +68,13 @@ docker compose --profile apps --profile observability up -d --build --wait
 | Postgres réplica | `localhost:15433` (TLS obligatorio) |
 | Valkey | `localhost:16379` (TLS obligatorio) |
 
-El BFF y `record-writer` no publican puertos en el host: el BFF solo se alcanza
-por Traefik y `record-writer` no recibe tráfico. Su estado se ve con
-`docker compose --profile apps ps`.
+El ciudadano solo entra por Traefik (`localhost:8000`): `/ws` y `/api/v1/*` van
+al BFF y todo lo demás a la PWA. Los puertos 18080–18081 y 18181–18182 existen
+solo en desarrollo, para consultar `/health`, `/ready` y `/metrics` de cada
+réplica.
+
+Para probar todos los endpoints uno por uno hay una colección de Postman en
+`docs/postman/` (ver su `README.md`).
 
 Los puertos del host se cambian con `.env` (ver `.env.example`).
 

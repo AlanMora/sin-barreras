@@ -1,0 +1,1753 @@
+{
+  "info": {
+    "name": "Sin Barreras · plataforma completa (local)",
+    "description": "Todos los endpoints HTTP de Sin Barreras en desarrollo local, para probarlos uno por uno.\n\n**Antes de empezar:** `make up-apps` (y el perfil `observability` para la carpeta 07).\n\n| Carpeta | Qué prueba |\n|---|---|\n| 01 | Que cada servicio esté vivo y listo |\n| 02 | El flujo completo del ciudadano, en orden |\n| 03 | La entrada por QR firmado |\n| 04 | Errores y validación estricta |\n| 05 | Hacer de operador del C5 a mano |\n| 06 | La frontera con el C5 (API simulada) |\n| 07 | Métricas y monitoreo |\n\nLas pruebas de cada petición se ven en la pestaña **Test Results**, y el resumen de los mensajes en la **Console**.\n\nGuía completa, incluido cómo probar el WebSocket: `docs/postman/README.md`.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "// Reemplaza el marcador de last_seq por el número guardado.",
+          "const raw = pm.request.body && pm.request.body.raw;",
+          "if (raw && raw.includes('\"__LAST_SEQ__\"')) {",
+          "  const seq = Number(pm.collectionVariables.get('last_seq') || 0);",
+          "  pm.request.body.update(raw.replace(/\"__LAST_SEQ__\"/g, String(seq)));",
+          "}"
+        ]
+      }
+    },
+    {
+      "listen": "test",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "// Se ejecuta después de CADA petición de la colección.",
+          "(() => {",
+          "let body;",
+          "try { body = pm.response.json(); } catch (e) { return; }",
+          "if (!body || typeof body !== 'object' || Array.isArray(body)) return;",
+          "",
+          "// hello → guarda la sesión. El token ROTA en cada welcome.",
+          "if (body.welcome && body.welcome.type === 'welcome') {",
+          "  const w = body.welcome;",
+          "  pm.collectionVariables.set('session_id', w.session_id);",
+          "  pm.collectionVariables.set('session_token', w.session_token);",
+          "  if (!w.resumed) pm.collectionVariables.set('last_seq', '0');",
+          "  if (w.incident) pm.collectionVariables.set('incident_id', w.incident.incident_id);",
+          "  console.log(`Sesión ${w.resumed ? 'reanudada' : 'nueva'}: ${w.session_id} · entrada: ${w.entry} · último seq: ${w.latest_seq}`);",
+          "}",
+          "",
+          "// Respuestas a comandos (ack, pong, error).",
+          "(body.replies || []).forEach(r => console.log(`← ${r.type}${r.status ? ' · ' + r.status : ''}${r.code ? ' · ' + r.code : ''}`));",
+          "",
+          "// Mensajes secuenciados: avanza last_seq y muestra un resumen legible.",
+          "const frames = body.frames || [];",
+          "if (frames.length) {",
+          "  let last = Number(pm.collectionVariables.get('last_seq') || 0);",
+          "  frames.forEach(f => {",
+          "    last = Math.max(last, f.seq);",
+          "    if (f.type === 'incident_created') pm.collectionVariables.set('incident_id', f.incident_id);",
+          "    const detail = f.text ? `${f.author}: \"${f.text}\"`",
+          "      : f.status ? f.status + (f.eta_seconds ? ` (≈ ${Math.round(f.eta_seconds / 60)} min)` : '')",
+          "      : f.incident_id || '';",
+          "    console.log(`seq ${f.seq} · ${f.type} · ${detail}`);",
+          "  });",
+          "  pm.collectionVariables.set('last_seq', String(last));",
+          "}",
+          "})();"
+        ]
+      }
+    }
+  ],
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "http://localhost:8000",
+      "description": "Traefik: la misma puerta que usa el ciudadano"
+    },
+    {
+      "key": "bff_1",
+      "value": "http://localhost:18080",
+      "description": "BFF réplica 1 (solo local)"
+    },
+    {
+      "key": "bff_2",
+      "value": "http://localhost:18081",
+      "description": "BFF réplica 2 (solo local)"
+    },
+    {
+      "key": "rw_1",
+      "value": "http://localhost:18181",
+      "description": "record-writer réplica 1 (solo local)"
+    },
+    {
+      "key": "rw_2",
+      "value": "http://localhost:18182",
+      "description": "record-writer réplica 2 (solo local)"
+    },
+    {
+      "key": "c5_mock_url",
+      "value": "http://localhost:8090"
+    },
+    {
+      "key": "prometheus_url",
+      "value": "http://localhost:9091"
+    },
+    {
+      "key": "grafana_url",
+      "value": "http://localhost:3300"
+    },
+    {
+      "key": "c5_api_key",
+      "value": "",
+      "description": "Contenido de infra/dev/secrets/c5_mock_api_key"
+    },
+    {
+      "key": "qr_point_id",
+      "value": "TOT-0142"
+    },
+    {
+      "key": "qr_key_id",
+      "value": "1"
+    },
+    {
+      "key": "qr_signature",
+      "value": "",
+      "description": "Genera la tuya con: docker compose --profile apps exec bff /app sign-qr TOT-0142 1 http://localhost:8000"
+    },
+    {
+      "key": "session_id",
+      "value": "",
+      "description": "Se llena solo"
+    },
+    {
+      "key": "session_token",
+      "value": "",
+      "description": "Se llena solo (rota en cada hello)"
+    },
+    {
+      "key": "last_seq",
+      "value": "0",
+      "description": "Se llena solo"
+    },
+    {
+      "key": "incident_id",
+      "value": "",
+      "description": "Nuestro ID de incidente (se llena solo)"
+    },
+    {
+      "key": "c5_incident_id",
+      "value": "",
+      "description": "ID del incidente en el C5 (se llena con 05 → Listar incidentes)"
+    },
+    {
+      "key": "client_msg_id",
+      "value": "",
+      "description": "Se genera en cada comando"
+    },
+    {
+      "key": "last_chat_msg_id",
+      "value": "",
+      "description": "Para la prueba de duplicado"
+    }
+  ],
+  "item": [
+    {
+      "name": "01 · Salud de los servicios",
+      "description": "Comprueba que cada pieza está viva (`/health`) y lista para trabajar (`/ready`, que revisa sus dependencias).\n\nEl BFF y record-writer tienen 2 réplicas; cada una tiene su propio puerto en desarrollo. Estos puertos **solo existen en local**: en producción nadie de fuera puede llegar a ellos.",
+      "item": [
+        {
+          "name": "PWA · Nginx (a través de Traefik)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/healthz",
+            "description": "Responde `ok` si Nginx está sirviendo la PWA. Pasa por Traefik, igual que el ciudadano."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('Responde 200', () => pm.response.to.have.status(200));"]
+              }
+            }
+          ]
+        },
+        {
+          "name": "BFF réplica 1 · health",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{bff_1}}/health",
+            "description": "Proceso vivo. No revisa dependencias."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('Responde 200', () => pm.response.to.have.status(200));"]
+              }
+            }
+          ]
+        },
+        {
+          "name": "BFF réplica 1 · ready",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{bff_1}}/ready",
+            "description": "Listo para recibir ciudadanos. Solo depende de Valkey: si el C5 se cae, el BFF sigue aceptando y guardando mensajes.\n\nTraefik consulta este endpoint cada 5 s y deja de mandar tráfico a la réplica si falla."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('Responde 200', () => pm.response.to.have.status(200));"]
+              }
+            }
+          ]
+        },
+        {
+          "name": "BFF réplica 2 · health",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{bff_2}}/health",
+            "description": "Igual que la réplica 1."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('Responde 200', () => pm.response.to.have.status(200));"]
+              }
+            }
+          ]
+        },
+        {
+          "name": "BFF réplica 2 · ready",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{bff_2}}/ready",
+            "description": "Igual que la réplica 1."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('Responde 200', () => pm.response.to.have.status(200));"]
+              }
+            }
+          ]
+        },
+        {
+          "name": "record-writer réplica 1 · health",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{rw_1}}/health",
+            "description": "Proceso vivo."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('Responde 200', () => pm.response.to.have.status(200));"]
+              }
+            }
+          ]
+        },
+        {
+          "name": "record-writer réplica 1 · ready",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{rw_1}}/ready",
+            "description": "Revisa Valkey y Postgres. Si Postgres se cae, responde 503 pero NO se pierde nada: los eventos esperan en el stream."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('Responde 200', () => pm.response.to.have.status(200));"]
+              }
+            }
+          ]
+        },
+        {
+          "name": "record-writer réplica 2 · health",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{rw_2}}/health",
+            "description": "Proceso vivo."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('Responde 200', () => pm.response.to.have.status(200));"]
+              }
+            }
+          ]
+        },
+        {
+          "name": "record-writer réplica 2 · ready",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{rw_2}}/ready",
+            "description": "Igual que la réplica 1."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('Responde 200', () => pm.response.to.have.status(200));"]
+              }
+            }
+          ]
+        },
+        {
+          "name": "c5-mock · health",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{c5_mock_url}}/health",
+            "description": "Simulador del C5 vivo."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('Responde 200', () => pm.response.to.have.status(200));"]
+              }
+            }
+          ]
+        },
+        {
+          "name": "c5-mock · ready",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{c5_mock_url}}/ready",
+            "description": "El simulador no tiene dependencias."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('Responde 200', () => pm.response.to.have.status(200));"]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "02 · Flujo del ciudadano (BFF por HTTP)",
+      "description": "Es exactamente lo que hace la PWA, pero paso a paso. **Ejecútalas en orden.**\n\nLa PWA usa WebSocket (`/ws`), pero el BFF ofrece el mismo protocolo por HTTP como respaldo para redes que bloquean WebSocket (ADR-0018). Postman usa ese camino: misma idempotencia, mismo registro y mismo `seq`.\n\n- `POST /api/v1/hello`: abre o reanuda la sesión.\n- `POST /api/v1/sync`: envía comandos y recibe los mensajes nuevos (`seq > last_seq`).\n\nLas variables `session_id`, `session_token`, `last_seq` e `incident_id` se llenan solas. Abre la **Console** de Postman (abajo a la izquierda) para ver un resumen legible de cada respuesta.\n\nContrato completo: `docs/contrato-eventos.md`.",
+      "item": [
+        {
+          "name": "1. Iniciar sesión (hello)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/hello",
+            "description": "Primer mensaje obligatorio. El BFF responde `welcome` con un token anónimo de sesión (sin cuentas).",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"hello\",\n  \"client_msg_id\": \"{{client_msg_id}}\",\n  \"protocol_version\": 1,\n  \"app_version\": \"postman\",\n  \"language\": \"es-MX\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('client_msg_id', pm.variables.replaceIn('{{$guid}}'));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Llega welcome', () => pm.expect(pm.response.json().welcome.type).to.eql('welcome'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "2. Crear incidente (elegir canal)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/sync",
+            "description": "Equivale a tocar un canal en la pantalla de inicio. Canales: `lsm_video`, `text_chat`, `audio`, `translation`, `silent`.\n\nEl `ack` significa que quedó guardado de forma durable en Valkey. Después llegan `incident_created` e `incident_status` (`received`).",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"session_id\": \"{{session_id}}\",\n  \"session_token\": \"{{session_token}}\",\n  \"last_seq\": \"__LAST_SEQ__\",\n  \"wait_ms\": 0,\n  \"commands\": [\n    {\n      \"type\": \"create_incident\",\n      \"client_msg_id\": \"{{client_msg_id}}\",\n      \"channel\": \"text_chat\"\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('client_msg_id', pm.variables.replaceIn('{{$guid}}'));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 200', () => pm.response.to.have.status(200));",
+                  "pm.test('ack accepted', () => pm.expect(pm.response.json().replies[0].status).to.be.oneOf(['accepted','duplicate']));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "3. Enviar mensaje de chat",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/sync",
+            "description": "Mensaje de texto (máximo 2000 caracteres). Si aún no hubiera incidente, este mensaje lo crea solo: nunca se bloquea un pedido de ayuda.\n\nGuarda su `client_msg_id` para la prueba de duplicado (paso 10).",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"session_id\": \"{{session_id}}\",\n  \"session_token\": \"{{session_token}}\",\n  \"last_seq\": \"__LAST_SEQ__\",\n  \"wait_ms\": 0,\n  \"commands\": [\n    {\n      \"type\": \"chat_message\",\n      \"client_msg_id\": \"{{client_msg_id}}\",\n      \"kind\": \"text\",\n      \"text\": \"Necesito ayuda, estoy en la avenida Vallarta\"\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('client_msg_id', pm.variables.replaceIn('{{$guid}}'));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 200', () => pm.response.to.have.status(200));",
+                  "pm.collectionVariables.set('last_chat_msg_id', pm.collectionVariables.get('client_msg_id'));",
+                  "pm.test('ack accepted', () => pm.expect(pm.response.json().replies[0].status).to.eql('accepted'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "4. Enviar respuesta rápida (modo silencioso)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/sync",
+            "description": "Botones del modo silencioso. `quick_reply`: `in_danger`, `cannot_speak`, `being_followed`, `injured`.\n\n`in_danger` e `injured` hacen que el operador simulado despache una unidad.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"session_id\": \"{{session_id}}\",\n  \"session_token\": \"{{session_token}}\",\n  \"last_seq\": \"__LAST_SEQ__\",\n  \"wait_ms\": 0,\n  \"commands\": [\n    {\n      \"type\": \"chat_message\",\n      \"client_msg_id\": \"{{client_msg_id}}\",\n      \"kind\": \"quick_reply\",\n      \"text\": \"Estoy en peligro\",\n      \"quick_reply\": \"in_danger\"\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('client_msg_id', pm.variables.replaceIn('{{$guid}}'));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('Responde 200', () => pm.response.to.have.status(200));"]
+              }
+            }
+          ]
+        },
+        {
+          "name": "5. Enviar ubicación GPS",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/sync",
+            "description": "Actualización de ubicación. `source`: `gps` o `network`. Se guarda cifrada en el registro y se reenvía al C5.\n\nLa ubicación nunca aparece en los logs.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"session_id\": \"{{session_id}}\",\n  \"session_token\": \"{{session_token}}\",\n  \"last_seq\": \"__LAST_SEQ__\",\n  \"wait_ms\": 0,\n  \"commands\": [\n    {\n      \"type\": \"location_update\",\n      \"client_msg_id\": \"{{client_msg_id}}\",\n      \"latitude\": 20.6736,\n      \"longitude\": -103.3445,\n      \"accuracy_m\": 12,\n      \"source\": \"gps\",\n      \"captured_at\": \"{{$isoTimestamp}}\"\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('client_msg_id', pm.variables.replaceIn('{{$guid}}'));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('Responde 200', () => pm.response.to.have.status(200));"]
+              }
+            }
+          ]
+        },
+        {
+          "name": "6. Solicitar videollamada",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/sync",
+            "description": "La PWA solo pide la sala; el sistema de video es de otro equipo. Al rato llega `video_call` con `status: ready` y un objeto `join` opaco para el componente de video.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"session_id\": \"{{session_id}}\",\n  \"session_token\": \"{{session_token}}\",\n  \"last_seq\": \"__LAST_SEQ__\",\n  \"wait_ms\": 0,\n  \"commands\": [\n    {\n      \"type\": \"video_call_request\",\n      \"client_msg_id\": \"{{client_msg_id}}\"\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('client_msg_id', pm.variables.replaceIn('{{$guid}}'));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('Responde 200', () => pm.response.to.have.status(200));"]
+              }
+            }
+          ]
+        },
+        {
+          "name": "7. Recibir mensajes nuevos (espera hasta 25 s)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/sync",
+            "description": "Long-polling: si no hay nada nuevo, el BFF espera hasta 25 s a que llegue algo. Aquí ves las respuestas del operador, los cambios de estado (`attending`, `unit_en_route`…) y `delivered`/`read`.\n\n**Ejecútala varias veces**: `last_seq` avanza solo y cada vez recibes solo lo nuevo.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"session_id\": \"{{session_id}}\",\n  \"session_token\": \"{{session_token}}\",\n  \"last_seq\": \"__LAST_SEQ__\",\n  \"wait_ms\": 25000,\n  \"commands\": []\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('Responde 200', () => pm.response.to.have.status(200));"]
+              }
+            }
+          ]
+        },
+        {
+          "name": "8. Confirmar recepción (ack de seq)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/sync",
+            "description": "El cliente confirma el último mensaje secuenciado que recibió. Este comando no recibe respuesta (`replies` vacío).",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"session_id\": \"{{session_id}}\",\n  \"session_token\": \"{{session_token}}\",\n  \"last_seq\": \"__LAST_SEQ__\",\n  \"wait_ms\": 0,\n  \"commands\": [\n    {\n      \"type\": \"ack\",\n      \"client_msg_id\": \"{{client_msg_id}}\",\n      \"seq\": \"__LAST_SEQ__\"\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('client_msg_id', pm.variables.replaceIn('{{$guid}}'));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('Responde 200', () => pm.response.to.have.status(200));"]
+              }
+            }
+          ]
+        },
+        {
+          "name": "9. Heartbeat (ping)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/sync",
+            "description": "La PWA lo manda cada 15 s. Responde `pong` y renueva la sesión.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"session_id\": \"{{session_id}}\",\n  \"session_token\": \"{{session_token}}\",\n  \"last_seq\": \"__LAST_SEQ__\",\n  \"wait_ms\": 0,\n  \"commands\": [\n    {\n      \"type\": \"ping\",\n      \"client_msg_id\": \"{{client_msg_id}}\"\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('client_msg_id', pm.variables.replaceIn('{{$guid}}'));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 200', () => pm.response.to.have.status(200));",
+                  "pm.test('pong', () => pm.expect(pm.response.json().replies[0].type).to.eql('pong'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "10. Reenviar el mismo mensaje (idempotencia)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/sync",
+            "description": "Reenvía el mensaje del paso 3 con el **mismo** `client_msg_id`, como pasaría tras una reconexión. El BFF responde `duplicate` y no lo procesa de nuevo: el operador no lo recibe dos veces.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"session_id\": \"{{session_id}}\",\n  \"session_token\": \"{{session_token}}\",\n  \"last_seq\": \"__LAST_SEQ__\",\n  \"wait_ms\": 0,\n  \"commands\": [\n    {\n      \"type\": \"chat_message\",\n      \"client_msg_id\": \"{{last_chat_msg_id}}\",\n      \"kind\": \"text\",\n      \"text\": \"Necesito ayuda, estoy en la avenida Vallarta\"\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 200', () => pm.response.to.have.status(200));",
+                  "pm.test('duplicate', () => pm.expect(pm.response.json().replies[0].status).to.eql('duplicate'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "11. Registrar evento de la interfaz",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/sync",
+            "description": "Eventos solo para el registro (no van al C5): `app_opened`, `privacy_notice_shown`, `privacy_notice_opened`, `channel_screen_shown`, `abandoned_before_help`, `quick_exit_used`, `settings_changed`, `permission_granted`, `permission_denied`, `went_offline`, `came_back_online`, `client_error`.\n\n`detail`: máximo 200 caracteres, sin datos sensibles.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"session_id\": \"{{session_id}}\",\n  \"session_token\": \"{{session_token}}\",\n  \"last_seq\": \"__LAST_SEQ__\",\n  \"wait_ms\": 0,\n  \"commands\": [\n    {\n      \"type\": \"client_event\",\n      \"client_msg_id\": \"{{client_msg_id}}\",\n      \"kind\": \"settings_changed\",\n      \"detail\": \"font_scale=1.25\"\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('client_msg_id', pm.variables.replaceIn('{{$guid}}'));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('Responde 200', () => pm.response.to.have.status(200));"]
+              }
+            }
+          ]
+        },
+        {
+          "name": "12. Reanudar sesión (como tras bloquear el celular)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/hello",
+            "description": "Simula volver a la app: `hello` con `resume`. El BFF reenvía todo lo posterior a `last_seq` y **rota el token** (el anterior deja de servir). Las variables se actualizan solas.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"hello\",\n  \"client_msg_id\": \"{{client_msg_id}}\",\n  \"protocol_version\": 1,\n  \"app_version\": \"postman\",\n  \"language\": \"es-MX\",\n  \"resume\": {\n    \"session_id\": \"{{session_id}}\",\n    \"session_token\": \"{{session_token}}\",\n    \"last_seq\": \"__LAST_SEQ__\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('client_msg_id', pm.variables.replaceIn('{{$guid}}'));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 200', () => pm.response.to.have.status(200));",
+                  "pm.test('resumed = true', () => pm.expect(pm.response.json().welcome.resumed).to.eql(true));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "13. Cerrar sesión",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/sync",
+            "description": "El ciudadano termina. `reason`: `ended_by_citizen` o `abandoned_before_help`. Para empezar de nuevo, vuelve al paso 1.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"session_id\": \"{{session_id}}\",\n  \"session_token\": \"{{session_token}}\",\n  \"last_seq\": \"__LAST_SEQ__\",\n  \"wait_ms\": 0,\n  \"commands\": [\n    {\n      \"type\": \"close\",\n      \"client_msg_id\": \"{{client_msg_id}}\",\n      \"reason\": \"ended_by_citizen\"\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('client_msg_id', pm.variables.replaceIn('{{$guid}}'));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('Responde 200', () => pm.response.to.have.status(200));"]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "03 · Entrada por QR",
+      "description": "Cada tótem tiene una URL firmada: `/?t=TOT-0142&k=1&s=<firma>`. El BFF valida la firma (HMAC) y usa el punto como ubicación de respaldo.\n\nLas llaves de desarrollo se generan en cada máquina con `make bootstrap`, así que la firma de `qr_signature` solo sirve en la máquina donde se generó. Para generar la tuya:\n\n```\ndocker compose --profile apps exec bff /app sign-qr TOT-0142 1 http://localhost:8000\n```",
+      "item": [
+        {
+          "name": "Iniciar sesión con QR firmado",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/hello",
+            "description": "Con una firma válida, `welcome.entry` es `verified`.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"hello\",\n  \"client_msg_id\": \"{{client_msg_id}}\",\n  \"protocol_version\": 1,\n  \"app_version\": \"postman\",\n  \"language\": \"es-MX\",\n  \"entry\": {\n    \"point_id\": \"{{qr_point_id}}\",\n    \"key_id\": \"{{qr_key_id}}\",\n    \"signature\": \"{{qr_signature}}\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('client_msg_id', pm.variables.replaceIn('{{$guid}}'));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 200', () => pm.response.to.have.status(200));",
+                  "pm.test('entry = verified', () => pm.expect(pm.response.json().welcome.entry).to.eql('verified'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Iniciar sesión con QR falsificado",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/hello",
+            "description": "Con una firma inválida, `welcome.entry` es `unverified`, pero **la sesión se abre igual**: una validación nunca bloquea pedir ayuda (ADR-0007).",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"hello\",\n  \"client_msg_id\": \"{{client_msg_id}}\",\n  \"protocol_version\": 1,\n  \"app_version\": \"postman\",\n  \"language\": \"es-MX\",\n  \"entry\": {\n    \"point_id\": \"TOT-9999\",\n    \"key_id\": \"1\",\n    \"signature\": \"AAAAAAAAAAAAAAAAAAAAAA\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('client_msg_id', pm.variables.replaceIn('{{$guid}}'));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 200', () => pm.response.to.have.status(200));",
+                  "pm.test('entry = unverified', () => pm.expect(pm.response.json().welcome.entry).to.eql('unverified'));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "04 · Errores y validación",
+      "description": "Lo que pasa cuando algo llega mal. Todos los errores tienen la misma forma: `type: error`, `code`, `message`, `retryable`.",
+      "item": [
+        {
+          "name": "Versión de protocolo no soportada (426)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/hello",
+            "description": "Una PWA vieja recibe `unsupported_protocol_version` con las versiones que sí acepta el BFF.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"hello\",\n  \"client_msg_id\": \"{{client_msg_id}}\",\n  \"protocol_version\": 99,\n  \"app_version\": \"postman\",\n  \"language\": \"es-MX\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('client_msg_id', pm.variables.replaceIn('{{$guid}}'));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('Responde 426', () => pm.response.to.have.status(426));"]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Campo desconocido (400)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/hello",
+            "description": "Validación estricta: el BFF rechaza campos que no existen en el contrato.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"hello\",\n  \"client_msg_id\": \"{{client_msg_id}}\",\n  \"protocol_version\": 1,\n  \"app_version\": \"postman\",\n  \"language\": \"es-MX\",\n  \"campo_inventado\": true\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('client_msg_id', pm.variables.replaceIn('{{$guid}}'));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('Responde 400', () => pm.response.to.have.status(400));"]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Token de sesión inválido (401)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/sync",
+            "description": "Con un token incorrecto o vencido, el BFF pide un nuevo `hello` (`hello_required`).",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"session_id\": \"{{session_id}}\",\n  \"session_token\": \"token-incorrecto\",\n  \"last_seq\": 0\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('Responde 401', () => pm.response.to.have.status(401));"]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Origen no permitido (403)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Origin",
+                "value": "https://sitio-ajeno.example"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{base_url}}/api/v1/hello",
+            "description": "Una página de otro dominio no puede usar el BFF (protección CORS/CSRF). Los orígenes permitidos se configuran en `ALLOWED_ORIGINS`.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"hello\",\n  \"client_msg_id\": \"{{client_msg_id}}\",\n  \"protocol_version\": 1,\n  \"app_version\": \"postman\",\n  \"language\": \"es-MX\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('client_msg_id', pm.variables.replaceIn('{{$guid}}'));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('Responde 403', () => pm.response.to.have.status(403));"]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "05 · Simulador del C5 · controles para pruebas",
+      "description": "Atajos para hacer de **operador del C5** a mano durante una prueba o una demo. Esta API es **inventada** y solo existe en el simulador; el C5 real no la tiene.\n\nEjecuta primero *Listar incidentes*: busca el incidente de tu sesión (su `external_ref` es nuestro `incident_id`) y guarda su número del C5 en `c5_incident_id`.\n\nDespués de cada control, ejecuta *02 → 7. Recibir mensajes nuevos* para ver el efecto del lado del ciudadano.",
+      "item": [
+        {
+          "name": "Listar incidentes",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{c5_mock_url}}/mock-control/incidents",
+            "description": "Todos los incidentes del simulador, con sus ubicaciones y su estado. Se borran al reiniciar el contenedor."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 200', () => pm.response.to.have.status(200));",
+                  "const list = pm.response.json();",
+                  "const mine = list.find(i => i.external_ref === pm.collectionVariables.get('incident_id'));",
+                  "if (mine) {",
+                  "  pm.collectionVariables.set('c5_incident_id', mine.incident_id);",
+                  "  console.log(`Tu incidente en el C5: ${mine.incident_id} (${mine.status})`);",
+                  "} else { console.log('No encontré el incidente de tu sesión; ejecuta antes la carpeta 02.'); }"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Operador escribe un mensaje",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{c5_mock_url}}/mock-control/incidents/{{c5_incident_id}}/operator-message",
+            "description": "Simula que el operador escribe lo que tú quieras.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"text\": \"Soy la operadora Ana. Una patrulla va hacia tu ubicación.\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('Responde 204', () => pm.response.to.have.status(204));"]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Cambiar estado · te atendemos",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{c5_mock_url}}/mock-control/incidents/{{c5_incident_id}}/status",
+            "description": "Estados: `received`, `attending`, `unit_en_route`, `unit_on_scene`, `closed`.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"attending\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('Responde 204', () => pm.response.to.have.status(204));"]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Cambiar estado · unidad en camino (8 min)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{c5_mock_url}}/mock-control/incidents/{{c5_incident_id}}/status",
+            "description": "`eta_seconds` es el tiempo estimado de llegada que ve el ciudadano.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"unit_en_route\",\n  \"eta_seconds\": 480\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('Responde 204', () => pm.response.to.have.status(204));"]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Cambiar estado · unidad en el lugar",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{c5_mock_url}}/mock-control/incidents/{{c5_incident_id}}/status",
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"unit_on_scene\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('Responde 204', () => pm.response.to.have.status(204));"]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Cambiar estado · incidente cerrado",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{c5_mock_url}}/mock-control/incidents/{{c5_incident_id}}/status",
+            "description": "Cierra el incidente. La PWA muestra \"incidente cerrado\".",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"closed\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('Responde 204', () => pm.response.to.have.status(204));"]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Ver fallas simuladas (caos)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{c5_mock_url}}/mock-control/chaos",
+            "description": "Configuración actual de latencia y fallas del simulador."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('Responde 200', () => pm.response.to.have.status(200));"]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Activar fallas: C5 lento e inestable",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{c5_mock_url}}/mock-control/chaos",
+            "description": "El 30 % de las peticiones al C5 fallan con 503 y tardan de 1 a 3 s. Úsalo para ver que el ciudadano no pierde mensajes: el BFF los guarda y los reintenta.\n\n**Después ejecuta *Restaurar*.**",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"latency_min_ms\": 1000,\n  \"latency_max_ms\": 3000,\n  \"failure_rate\": 0.3,\n  \"feed_drop_every_secs\": 0\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('Responde 200', () => pm.response.to.have.status(200));"]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Restaurar: sin fallas",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{c5_mock_url}}/mock-control/chaos",
+            "description": "Valores normales del simulador.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"latency_min_ms\": 50,\n  \"latency_max_ms\": 300,\n  \"failure_rate\": 0.0,\n  \"feed_drop_every_secs\": 0\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('Responde 200', () => pm.response.to.have.status(200));"]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "06 · Simulador del C5 · API que usa el BFF",
+      "description": "Lo que el BFF le pide al C5 a través del puerto `C5Gateway` (adaptador `MockHttpGateway`). **Normalmente no se llama a mano**; está aquí para que veas la frontera con el C5.\n\nEsta API es **inventada**: cuando llegue la documentación del C5 real, se escribe otro adaptador y estas rutas desaparecen. Las dudas para el C5 están en `docs/c5-preguntas.md`.\n\nRequiere la variable `c5_api_key`. Cópiala de `infra/dev/secrets/c5_mock_api_key` (se genera en cada máquina; no se sube a Git).\n\nEl feed de eventos del C5 (`GET /mock-api/v1/events?since=0`) es un WebSocket y no está en esta colección.",
+      "item": [
+        {
+          "name": "Crear incidente",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "x-api-key",
+                "value": "{{c5_api_key}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{c5_mock_url}}/mock-api/v1/incidents",
+            "description": "`external_ref` es nuestro `incident_id`: así se cruzan nuestro registro y el del C5. Guarda el número que devuelve en `c5_incident_id`.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"idempotency_key\": \"{{$guid}}\",\n  \"external_ref\": \"{{$guid}}\",\n  \"channel\": \"text_chat\",\n  \"language\": \"es-MX\",\n  \"entry_point\": \"TOT-0142\",\n  \"entry_verified\": true\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Responde 201', () => pm.response.to.have.status(201));",
+                  "pm.collectionVariables.set('c5_incident_id', pm.response.json().incident_id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Enviar mensaje al C5",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "x-api-key",
+                "value": "{{c5_api_key}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{c5_mock_url}}/mock-api/v1/incidents/{{c5_incident_id}}/messages",
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"idempotency_key\": \"{{$guid}}\",\n  \"kind\": \"text\",\n  \"text\": \"Mensaje directo al C5\",\n  \"quick_reply\": null\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('Responde 201', () => pm.response.to.have.status(201));"]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Enviar ubicación al C5",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "x-api-key",
+                "value": "{{c5_api_key}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{c5_mock_url}}/mock-api/v1/incidents/{{c5_incident_id}}/locations",
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"idempotency_key\": \"{{$guid}}\",\n  \"latitude\": 20.6736,\n  \"longitude\": -103.3445,\n  \"accuracy_m\": 12,\n  \"source\": \"gps\",\n  \"captured_at\": \"{{$isoTimestamp}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('Responde 202', () => pm.response.to.have.status(202));"]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Pedir videollamada al C5",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "x-api-key",
+                "value": "{{c5_api_key}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{c5_mock_url}}/mock-api/v1/incidents/{{c5_incident_id}}/video-calls",
+            "description": "`media`: `video` (con intérprete de LSM) o `audio`.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"idempotency_key\": \"{{$guid}}\",\n  \"media\": \"video\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('Responde 201', () => pm.response.to.have.status(201));"]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Sin API key (401)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{c5_mock_url}}/mock-api/v1/incidents",
+            "description": "Sin `x-api-key` el simulador rechaza la petición.",
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('Responde 401', () => pm.response.to.have.status(401));"]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "07 · Métricas y monitoreo",
+      "description": "Métricas en formato Prometheus de cada servicio, y las APIs de Prometheus y Grafana.\n\nPrometheus y Grafana solo existen si levantaste el perfil de observabilidad:\n\n```\ndocker compose --profile apps --profile observability up -d --build --wait\n```",
+      "item": [
+        {
+          "name": "BFF · métricas",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{bff_1}}/metrics",
+            "description": "Conexiones, sesiones, latencia de entrega, errores hacia el C5, rechazos por rate limit…"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('Responde 200', () => pm.response.to.have.status(200));"]
+              }
+            }
+          ]
+        },
+        {
+          "name": "record-writer · métricas",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{rw_1}}/metrics",
+            "description": "Eventos insertados, duplicados descartados, reintentos, cola de errores (DLQ) y retraso."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('Responde 200', () => pm.response.to.have.status(200));"]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Prometheus · ¿está listo?",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{prometheus_url}}/-/ready",
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('Responde 200', () => pm.response.to.have.status(200));"]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Prometheus · estado de los servicios vigilados",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{prometheus_url}}/api/v1/targets?state=active",
+            "description": "Qué servicios está leyendo Prometheus y si responden (`health: up`)."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('Responde 200', () => pm.response.to.have.status(200));"]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Prometheus · alertas activas",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{prometheus_url}}/api/v1/alerts",
+            "description": "Por ejemplo: el stream del registro está creciendo o hay eventos en la cola de errores."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('Responde 200', () => pm.response.to.have.status(200));"]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Prometheus · consulta: eventos guardados",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{prometheus_url}}/api/v1/query?query=sum(sb_record_writer_inserted_total)",
+            "description": "Total de eventos que record-writer ha guardado en Postgres (suma de ambas réplicas)."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('Responde 200', () => pm.response.to.have.status(200));"]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Grafana · health",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{grafana_url}}/api/health",
+            "description": "Los tableros se ven en el navegador: {{grafana_url}} (usuario `admin`; contraseña en `infra/dev/secrets/grafana_admin_password`)."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": ["pm.test('Responde 200', () => pm.response.to.have.status(200));"]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
