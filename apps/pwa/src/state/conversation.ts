@@ -50,6 +50,14 @@ export const entryVerification = signal<EntryVerification>('none');
 export const incident = signal<IncidentInfo | null>(null);
 /** El ciudadano ya pidió ayuda (aunque el C5 no haya confirmado aún). */
 export const helpRequested = signal<Channel | null>(null);
+/** Pantalla de la conversación activa, para volver a ella desde otras pantallas. */
+export const CONVERSATION_PATH: Record<Channel, string> = {
+  lsm_video: '/llamada?m=video',
+  audio: '/llamada?m=audio',
+  text_chat: '/chat',
+  translation: '/chat',
+  silent: '/silencioso',
+};
 export const messages = signal<ChatItem[]>([]);
 export const call = signal<CallInfo | null>(null);
 /** Último aviso para la región `aria-live` (lectores de pantalla). */

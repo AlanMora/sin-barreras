@@ -19,6 +19,7 @@ const screens = [
   '/silencioso',
   '/llamada?m=video',
   '/idioma',
+  '/mis-reportes',
   '/ajustes',
   '/aviso-de-privacidad',
   '/clima',

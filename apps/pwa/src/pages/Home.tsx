@@ -1,22 +1,12 @@
-import {
-  ChevronRight,
-  HandHelping,
-  Languages,
-  MessageSquareText,
-  MicOff,
-  ShieldCheck,
-  Video,
-  Volume2,
-} from 'lucide-preact';
+import { ChevronRight, Languages, MessageSquareText, MicOff, Video, Volume2 } from 'lucide-preact';
 import type { ComponentChildren } from 'preact';
 import { useEffect } from 'preact/hooks';
-import { FallbackContact } from '../components/FallbackContact';
 import { IncidentStatus } from '../components/IncidentStatus';
 import { PageTitle } from '../components/ui';
 import { type MessageKey, t } from '../i18n';
 import type { Channel } from '../protocol/generated';
 import { clientEvent } from '../services';
-import { connectionStatus, helpRequested } from '../state/conversation';
+import { CONVERSATION_PATH, connectionStatus, helpRequested } from '../state/conversation';
 
 interface Option {
   href: string;
@@ -31,15 +21,6 @@ const OPTIONS: Option[] = [
   { href: '/idioma', key: 'translation', icon: <Languages size={26} /> },
   { href: '/silencioso', key: 'silent', icon: <MicOff size={26} /> },
 ];
-
-/** Pantalla de la conversación activa, para volver a ella desde el inicio. */
-const CONVERSATION: Record<Channel, string> = {
-  lsm_video: '/llamada?m=video',
-  audio: '/llamada?m=audio',
-  text_chat: '/chat',
-  translation: '/chat',
-  silent: '/silencioso',
-};
 
 /** Indicador breve de la conexión (no es región viva: los cambios ya los
  *  anuncia el aviso de conexión). */
@@ -65,8 +46,6 @@ function StatusChip() {
 
 export function Home() {
   useEffect(() => {
-    // El aviso está visible en esta pantalla desde el primer momento.
-    clientEvent('privacy_notice_shown');
     clientEvent('channel_screen_shown');
   }, []);
   const active = helpRequested.value;
@@ -83,7 +62,7 @@ export function Home() {
       {active ? (
         <div class="flex flex-col gap-3">
           <IncidentStatus />
-          <a href={CONVERSATION[active]} class="sb-cta">
+          <a href={CONVERSATION_PATH[active]} class="sb-cta">
             {t('home.cta_back')}
             <ChevronRight size={28} strokeWidth={3} aria-hidden="true" />
           </a>
@@ -134,40 +113,6 @@ export function Home() {
           </a>
         </div>
       )}
-
-      {/* Aviso de privacidad: visible, breve y NUNCA bloquea pedir ayuda. */}
-      <section aria-labelledby="privacy-short" class="sb-card flex items-start gap-3 p-4">
-        <span
-          aria-hidden="true"
-          class="grid h-10 w-10 shrink-0 place-items-center rounded-xl sb-tint-3"
-        >
-          <ShieldCheck size={20} />
-        </span>
-        <div class="min-w-0">
-          <p id="privacy-short" class="text-base">
-            {t('privacy.short')}
-          </p>
-          <a
-            href="/aviso-de-privacidad"
-            class="inline-flex min-h-touch items-center font-bold text-accent-text underline decoration-2 underline-offset-4"
-          >
-            {t('privacy.link')}
-          </a>
-        </div>
-      </section>
-
-      <section aria-labelledby="fallback-title" class="sb-card p-4">
-        <h2
-          id="fallback-title"
-          class="mb-1 flex items-center gap-2 font-display text-lg font-extrabold"
-        >
-          <HandHelping size={22} aria-hidden="true" class="text-accent-text" />
-          {t('fallback.title')}
-        </h2>
-        <FallbackContact compact />
-      </section>
-
-      <p class="text-center text-sm text-muted">{t('app.program')}</p>
     </>
   );
 }

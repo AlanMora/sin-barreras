@@ -3,7 +3,6 @@ import type { MessageKey } from './es';
 /** English. Must contain every key (enforced by the type). */
 export const en: Record<MessageKey, string> = {
   'app.name': 'Sin Barreras',
-  'app.program': 'Inclusive Emergency Response · C5 Zapopan',
   'app.skip': 'Skip to content',
   'app.back': 'Back',
   'app.settings': 'Settings',
@@ -11,6 +10,7 @@ export const en: Record<MessageKey, string> = {
   'nav.label': 'Main navigation',
   'nav.home': 'Home',
   'nav.info': 'Information',
+  'nav.reports': 'My reports',
   'nav.settings': 'Settings',
   'lang.switch_to': 'Change language to',
   'app.loading': 'Loading…',
@@ -36,10 +36,14 @@ export const en: Record<MessageKey, string> = {
   'channel.silent.title': 'Silent mode',
   'channel.silent.desc': 'No sound. For when you cannot talk.',
 
-  'privacy.short':
-    'To help you, we keep the conversation and your location as a record of the emergency.',
-  'privacy.link': 'Privacy notice',
   'privacy.title': 'Privacy notice',
+
+  'reports.title': 'My reports',
+  'reports.subtitle': 'See how your report is going and return to your conversation.',
+  'reports.empty.title': 'You have no reports yet',
+  'reports.empty.body': 'When you ask for help, you will see how your report is going here.',
+  'reports.safety':
+    'For your safety, you only see your current report. We do not keep a history on this phone.',
 
   'fallback.title': "Can't connect?",
   'fallback.call': 'Call {phone}',

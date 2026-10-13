@@ -1,4 +1,4 @@
-import { ArrowLeft, Globe, House, Info, Settings } from 'lucide-preact';
+import { ArrowLeft, ClipboardList, Globe, House, Info, Settings } from 'lucide-preact';
 import type { ComponentChildren } from 'preact';
 import { LOCALES, type Locale, locale, t } from '../i18n';
 import { clientEvent } from '../services';
@@ -34,6 +34,7 @@ function LanguageToggle() {
 
 const NAV = [
   { href: '/', key: 'nav.home', icon: House },
+  { href: '/mis-reportes', key: 'nav.reports', icon: ClipboardList },
   { href: '/aviso-de-privacidad', key: 'nav.info', icon: Info },
   { href: '/ajustes', key: 'nav.settings', icon: Settings },
 ] as const;
@@ -41,7 +42,7 @@ const NAV = [
 function BottomNav({ path }: { path: string }) {
   return (
     <nav aria-label={t('nav.label')} class="sb-nav fixed inset-x-0 bottom-0 z-30">
-      <ul class="mx-auto grid max-w-2xl grid-cols-3">
+      <ul class="mx-auto grid max-w-2xl grid-cols-4">
         {NAV.map(({ href, key, icon: Icon }) => {
           const current = path === href;
           return (
@@ -49,7 +50,7 @@ function BottomNav({ path }: { path: string }) {
               <a
                 href={href}
                 {...(current ? { 'aria-current': 'page' } : {})}
-                class={`flex min-h-[4rem] flex-col items-center justify-center gap-1 text-sm font-bold ${current ? 'text-accent-text' : 'text-muted'}`}
+                class={`flex min-h-[4rem] flex-col items-center justify-center gap-1 px-1 text-center text-sm font-bold leading-tight ${current ? 'text-accent-text' : 'text-muted'}`}
               >
                 <Icon size={24} aria-hidden="true" strokeWidth={current ? 2.5 : 2} />
                 {t(key)}

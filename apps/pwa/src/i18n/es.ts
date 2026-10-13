@@ -4,7 +4,6 @@
  */
 export const es = {
   'app.name': 'Sin Barreras',
-  'app.program': 'Atención Incluyente de Emergencias · C5 Zapopan',
   'app.skip': 'Saltar al contenido',
   'app.back': 'Regresar',
   'app.settings': 'Ajustes',
@@ -12,6 +11,7 @@ export const es = {
   'nav.label': 'Navegación principal',
   'nav.home': 'Inicio',
   'nav.info': 'Información',
+  'nav.reports': 'Mis reportes',
   'nav.settings': 'Ajustes',
   'lang.switch_to': 'Cambiar idioma a',
   'app.loading': 'Cargando…',
@@ -37,10 +37,14 @@ export const es = {
   'channel.silent.title': 'Modo silencioso',
   'channel.silent.desc': 'Sin sonido. Para cuando no puedes hablar.',
 
-  'privacy.short':
-    'Para atenderte, guardamos la conversación y tu ubicación como respaldo de la emergencia.',
-  'privacy.link': 'Aviso de privacidad',
   'privacy.title': 'Aviso de privacidad',
+
+  'reports.title': 'Mis reportes',
+  'reports.subtitle': 'Aquí ves cómo va tu reporte y puedes volver a tu conversación.',
+  'reports.empty.title': 'Aún no tienes reportes',
+  'reports.empty.body': 'Cuando pidas ayuda, aquí verás cómo va tu reporte.',
+  'reports.safety':
+    'Por tu seguridad, solo ves tu reporte actual. No guardamos un historial en este teléfono.',
 
   'fallback.title': '¿No puedes conectarte?',
   'fallback.call': 'Llamar al {phone}',
