@@ -37,6 +37,7 @@ export const es = {
   'channel.silent.title': 'Modo silencioso',
   'channel.silent.desc': 'Sin sonido. Para cuando no puedes hablar.',
 
+  'privacy.link': 'Aviso de privacidad',
   'privacy.title': 'Aviso de privacidad',
 
   'reports.title': 'Mis reportes',

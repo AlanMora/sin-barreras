@@ -1,4 +1,12 @@
-import { ChevronRight, Languages, MessageSquareText, MicOff, Video, Volume2 } from 'lucide-preact';
+import {
+  ChevronRight,
+  Languages,
+  MessageSquareText,
+  MicOff,
+  ShieldCheck,
+  Video,
+  Volume2,
+} from 'lucide-preact';
 import type { ComponentChildren } from 'preact';
 import { useEffect } from 'preact/hooks';
 import { IncidentStatus } from '../components/IncidentStatus';
@@ -46,6 +54,8 @@ function StatusChip() {
 
 export function Home() {
   useEffect(() => {
+    // El enlace al aviso está visible en esta pantalla desde el primer momento.
+    clientEvent('privacy_notice_shown');
     clientEvent('channel_screen_shown');
   }, []);
   const active = helpRequested.value;
@@ -113,6 +123,15 @@ export function Home() {
           </a>
         </div>
       )}
+
+      {/* Aviso de privacidad: visible pero discreto; NUNCA bloquea pedir ayuda. */}
+      <a
+        href="/aviso-de-privacidad"
+        class="mx-auto inline-flex min-h-touch items-center gap-1.5 px-3 text-sm text-muted underline decoration-1 underline-offset-4"
+      >
+        <ShieldCheck size={16} aria-hidden="true" />
+        {t('privacy.link')}
+      </a>
     </>
   );
 }

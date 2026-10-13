@@ -36,6 +36,7 @@ export const en: Record<MessageKey, string> = {
   'channel.silent.title': 'Silent mode',
   'channel.silent.desc': 'No sound. For when you cannot talk.',
 
+  'privacy.link': 'Privacy notice',
   'privacy.title': 'Privacy notice',
 
   'reports.title': 'My reports',
